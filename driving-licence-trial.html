@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 2 of 10 - Figure 8 outer line now gives a 2 second warning instead of an instant fail, and the timer pauses when you are stopped. Speed in Figure 8 is limited to 5 km per hour in this commit (that limit is removed again in commit 8). Only Figure 8 and the plank score (30 points, pass 21).</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 3 of 10 - Traffic light station added (40 points, pass 28). Stop on red at x = 16, go on green. Bumps, ramp and U-turn are still not scored yet.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -541,7 +541,7 @@ var CONFIG = {
   // not a full 100-point rescale: no per-station 100-point
   // values were given, so none are invented (see start
   // screen scoring paragraph, which says this plainly).
-  points: { figure8: 20, plank: 10, uturn: 0, signal: 0, bumps: 0, ramp: 0 }, // implemented total = 30 (this commit)
+  points: { figure8: 20, plank: 10, uturn: 0, signal: 10, bumps: 0, ramp: 0 }, // implemented total = 40 (this commit)
   passFraction: 0.70,                            // 70% of implemented total
   penalties: { islandFirstTouch: 5, stopSkipped: 5, redLight: 5,
              bumpsHighSpeed: 5, bumpsSkipped: 5,
@@ -3117,9 +3117,40 @@ function checkRamp() {
 }
 
 function checkTrafficLight() {
-  // Not yet scored in this commit - light stays green.
+  var SG = CONFIG.signal;
+  // Gated on the U-turn (station 5, after station 4), so
+  // the timer cannot start while the bike is still on its
+  // way to the pocket, and crossing the line at x = 16
+  // before the pocket does not count.
   if (!S.uturnDone) return;
-  if (!S.lightStarted) { S.lightStarted = true; S.lightState = 'green'; updateTrafficLight(); }
+  // Traffic light: red on arrival. The timer only starts when
+  // the bike is close (within 8 m before the line) on the
+  // eastbound lane heading east, so the light is still red
+  // at the stop line for a normal approach. It then turns
+  // green after a random 2-4 s.
+  if (!S.lightStarted &&
+      bikeState.x > SG.stopLineX - SG.zoneBefore && bikeState.x < SG.stopLineX &&
+      Math.abs(bikeState.z - SG.laneZ) < 2.5 &&
+      Math.cos(bikeState.heading) > 0) {
+    S.lightStarted = true; S.lightState = 'red';
+    S.lightTimer = SG.redMin + Math.random() * (SG.redMax - SG.redMin);
+    updateTrafficLight();
+  }
+  if (S.lightStarted && S.lightState === 'red') {
+    S.lightTimer -= lastDt;
+    if (S.lightTimer <= 0) {
+      S.lightState = 'green'; updateTrafficLight();
+      showToast('Green light - go!', true);
+    }
+  }
+  // Crossing the light stop line while red = -5, once.
+  // Eastbound, so crossing means x goes past the line to the east.
+  if (S.lightStarted && S.lightState === 'red' && !S.lightPenalty &&
+      bikeState.x > SG.stopLineX &&
+      Math.abs(bikeState.z - SG.laneZ) < 2.5) {
+    S.lightPenalty = true;
+    showToast('Red light crossed: -' + CONFIG.penalties.redLight + ' points', false);
+  }
 }
 
 function checkBumps() {
