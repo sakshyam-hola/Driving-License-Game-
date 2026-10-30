@@ -1,0 +1,3659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Nepal Driving Licence Trial - Bike (Category A)</title>
+<!--
+  NEPAL DRIVING LICENCE TRIAL - 3D GAME (ONE FILE)
+  =================================================
+  How to run: just open this file in a browser (double-click it, or
+  drag it into Chrome / Edge / Firefox / Safari). No server, no build
+  step, no install. It needs internet once, to load Three.js r128
+  from cdnjs. Everything else (ground, islands, plank, bike, rider)
+  is built from plain Three.js primitives - no other library, no
+  external images.
+
+  Units are metres. The ground plane is X (east) / Z (south).
+  The bike starts in the west heading east (+X). Heading angle `a`
+  means forward = (cos a, 0, sin a), so a = 0 is east, a = +90 deg
+  is south (+Z), a = -90 deg is north (-Z).
+
+  Route, strictly in this order (2026-10-29 U-turn re-insertion):
+    Start (-54, 0) -> Figure 8 (two islands on the centre axis,
+    left (-40.25, 0) and right (-35.75, 0), entered from the
+    right (south) side, right island clockwise first, then
+    left island counter-clockwise, exited east on the right
+    (south) lane) -> STOP line (x = -12) -> narrow plank
+    (x = -10 to 0) -> U-Turn pocket, north side (centre (6, -4),
+    entry (10, -4) heading north, left turn through the north
+    semicircle to exit (2, -4) heading south, then east again)
+    -> traffic light, eastbound (stop line x = 16, red 2-4 s
+    random, then green) -> road bumps, eastbound (5 bumps,
+    centres x = 20, 22, 24, 26, 28, z = 0) -> high-quality ramp,
+    eastbound (x = 32 to 47, z = 0: up 6 m, flat 3 m, down 6 m,
+    uphill stop x = 35, downhill stop x = 44) -> finish gate
+    (x = 50, z = 0, heading east). A U-turn reverses direction
+    by definition, so the pocket is a detour off the main lane:
+    the bike turns left off the main lane at x = 10, turns
+    180 deg left in the pocket, and rejoins the main lane
+    heading east at x = 2, before the light. The light, bumps,
+    ramp and finish were shifted east by 10 m (from 6 / 10-18 /
+    22-37 / 40) so no station is crossed before its turn in
+    the order, and so the pocket (outer x -1 to 11) never
+    overlaps a downstream station. There is no return lane:
+    after the pocket, everything is eastbound again.
+
+  Figure 8, official layout: islands are 3 m diameter, centres
+  4.5 m apart east-west, lane 1.5 m wide around each, so each
+  outer boundary is a 3 m circle. The two outer circles overlap
+  by 1.5 m (3 + 3 - 4.5); the painted boundary is ONE line
+  following the union of the two circles (two major arcs meeting
+  at the two circle-intersection points, with a narrow neck in
+  the middle). The lane-centre circles (radius 2.25 m) are
+  tangent at the middle point (-38, 0), which is where the
+  rider crosses from one loop to the other.
+  Loop detection is by CHECKPOINTS in order (see CONFIG.fig8),
+  not by a full 360 deg angle around each island - that was
+  the 2026-10-28 playability fix. In order: left north, middle,
+  right south, right east, right north, middle again, then exit
+  east. Wrong-way angle past ~34 deg in the wrong direction
+  around the current island = fail. The outer line is checked
+  on the BIKE CENTRE, not the wheels, and only after the first
+  checkpoint, and it only fails after 2 seconds continuously
+  outside - a brief corner overshoot with binary keyboard
+  steering no longer fails instantly (see checkFigure8).
+  Figure 8 track surface is always clean: only the white union
+  boundary, the islands and their cones. No arrows, floor markers
+  or guide overlays are drawn there at all, whatever the Arrows
+  toggle says. Outside Figure 8, all directional arrows and yellow
+  route dashes live in one toggleable group (arrowGroup) and are
+  shown/hidden together by the "Arrows: ON / OFF" button.
+-->
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    background: #87a86b; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+  #game { position: fixed; inset: 0; display: block; touch-action: none;
+    width: 100vw; height: 100vh; height: 100dvh; }
+
+  /* ---- Top bar: glassmorphism HUD (2026-10-29 visual upgrade) ----
+     Translucent dark backdrop + blur, rounded card inset from the
+     viewport edges, white typography, coloured pill badges. The
+     bar itself is pure presentation: station/score/speed/gear
+     text is still set by setStation()/updateHUD() exactly as
+     before, and the buttons still call the same handlers. */
+  #topbar { position: fixed; top: 10px; left: 10px; right: 10px; z-index: 10;
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.5); -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px); color: #fff; flex-wrap: wrap;
+    border-radius: 14px; border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.35); }
+  #topbar .station { font-weight: 800; font-size: 16px; white-space: nowrap;
+    background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 999px; padding: 4px 12px; }
+  #topbar .hint { flex: 1; font-size: 13px; opacity: 0.92; min-width: 180px; }
+  #topbar .score { font-weight: 700; font-size: 14px; white-space: nowrap;
+    background: rgba(16,185,129,0.22); border: 1px solid rgba(16,185,129,0.45);
+    color: #d1fae5; border-radius: 999px; padding: 4px 11px; }
+  #topbar .speed { font-size: 14px; font-weight: 700; white-space: nowrap;
+    background: rgba(59,130,246,0.22); border: 1px solid rgba(59,130,246,0.45);
+    color: #dbeafe; border-radius: 999px; padding: 4px 11px; }
+  #topbar .gear { font-weight: 800; font-size: 14px; white-space: nowrap;
+    background: #f5c518; color: #111; border-radius: 999px; padding: 4px 11px;
+    border: 1px solid rgba(245,197,24,0.6); }
+  /* Left-signal badge for the U-turn station: grey when off,
+     amber when the left indicator is on (toggled by L / IND). */
+  #topbar .timer { font-weight: 700; font-size: 13px; white-space: nowrap;
+    background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+    color: #fff; border-radius: 999px; padding: 4px 11px; }
+  #topbar .indicator { font-weight: 700; font-size: 13px; white-space: nowrap;
+    background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+    color: #e2e8f0; border-radius: 999px; padding: 4px 11px; }
+  #topbar .indicator.on { background: #f5c518; color: #111;
+    border-color: rgba(245,197,24,0.6); }
+  #topbar button { background: rgba(255,255,255,0.14); color: #fff;
+    border: 1px solid rgba(255,255,255,0.25); border-radius: 999px;
+    padding: 7px 13px; font-weight: 700; cursor: pointer; font-size: 13px; }
+  #topbar button:hover { background: rgba(255,255,255,0.24); }
+  #topbar button:active { transform: scale(0.97); }
+  #topbar button:focus-visible, .btn:focus-visible, .mbtn:focus-visible,
+  .lookbtn:focus-visible { outline: 2px solid #f5c518; outline-offset: 2px; }
+
+  /* ---- Toast (penalty / info pop-up) ---- */
+  #toast { position: fixed; top: 78px; left: 50%; transform: translateX(-50%);
+    z-index: 20; background: #e11d48; color: #fff; padding: 10px 18px;
+    border-radius: 999px; font-weight: 700; font-size: 15px; display: none;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.25);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); text-align: center; max-width: 92vw; }
+  #toast.ok { background: #059669; }
+  #toast.show { display: block; }
+
+  /* ---- Overlays: start screen + result screen ---- */
+  .overlay { position: fixed; inset: 0; z-index: 30; display: flex;
+    align-items: center; justify-content: center; padding: 16px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    background: rgba(2,6,23,0.66); -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px); }
+  .overlay.hidden { display: none; }
+  .card { background: #ffffff; color: #0f172a; border-radius: 20px; padding: 22px 24px;
+    max-width: 600px; width: 100%; max-height: 92vh; max-height: 92dvh; overflow-y: auto;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.6); }
+  .card h1 { margin: 0 0 6px; font-size: 24px; }
+  .card h2 { margin: 14px 0 6px; font-size: 17px; }
+  .card p, .card li { font-size: 14.5px; line-height: 1.55; }
+  .card ul { margin: 6px 0; padding-left: 20px; }
+  .card .big { font-size: 30px; font-weight: 800; margin: 10px 0; }
+  /* End scorecard status: emerald = pass, rose = fail, as a
+     tinted pill behind the big score (showResult still sets
+     .big.pass / .big.fail, exactly as before). */
+  .card .big.pass { color: #059669; background: rgba(5,150,105,0.12);
+    border: 1px solid rgba(5,150,105,0.35); border-radius: 14px; padding: 8px 14px; }
+  .card .big.fail { color: #e11d48; background: rgba(225,29,72,0.10);
+    border: 1px solid rgba(225,29,72,0.35); border-radius: 14px; padding: 8px 14px; }
+  .card .pass { color: #059669; } .card .fail { color: #e11d48; }
+  .btn { display: inline-block; background: #059669; color: #fff; border: none;
+    border-radius: 999px; padding: 13px 26px; font-size: 17px; font-weight: 800;
+    cursor: pointer; margin-top: 10px; box-shadow: 0 6px 18px rgba(5,150,105,0.35); }
+  .btn:hover { background: #047857; }
+  .btn.secondary { background: #334155; box-shadow: none; }
+  .btn.secondary:hover { background: #1e293b; }
+  .breakdown { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14.5px; }
+  .breakdown td { padding: 5px 4px; border-bottom: 1px solid #eee; }
+  .breakdown td:last-child { text-align: right; font-weight: 700; }
+
+  /* ---- Mobile on-screen controls: hidden unless touch device ----
+     Ergonomic thumbs zones: steering on the bottom-left, gas /
+     brake / gear on the bottom-right, CAM as a smaller button
+     above the right pad (the top bar already has a camera
+     button, so CAM is secondary here). Sizes use clamp() so
+     buttons stay thumb-sized on phones and do not balloon on
+     tablets, and the bottom padding respects the safe area. */
+  #mobileControls { display: none; position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: 15; padding: 12px; padding-bottom: max(12px, env(safe-area-inset-bottom));
+    pointer-events: none; }
+  body.touch #mobileControls { display: flex; justify-content: space-between;
+    align-items: flex-end; gap: 8px; }
+  .pad { display: flex; gap: 10px; pointer-events: auto; flex-wrap: wrap; }
+  .pad.right-zone { flex-direction: column; align-items: flex-end; }
+  .pad.right-zone .cam-row { display: flex; justify-content: flex-end; width: 100%; }
+  .mbtn { width: clamp(60px, 15vw, 76px); height: clamp(60px, 15vw, 76px);
+    border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
+    background: rgba(0, 0, 0, 0.5); -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px); color: #fff; font-size: 26px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none; -webkit-user-select: none; touch-action: none;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.35); transition: transform 0.08s, background 0.08s; }
+  .mbtn.pressed { background: rgba(245,197,24,0.92); color: #111; transform: scale(0.94); }
+  .mbtn:active { transform: scale(0.94); }
+  /* Racing style, 2026-10-29: gas/brake are dark-glass like the
+     steering buttons, with bold white icons; the yellow pressed
+     state below still gives press feedback. ids/data-input
+     unchanged, so the wiring is untouched. */
+  .mbtn.gas { background: rgba(0, 0, 0, 0.5); }
+  .mbtn.brake { background: rgba(0, 0, 0, 0.5); }
+  .mbtn.cam { width: clamp(52px, 12vw, 60px); height: clamp(52px, 12vw, 60px);
+    font-size: 13px; background: rgba(0, 0, 0, 0.5); }
+  /* Gear buttons: smaller text so GEAR+ / GEAR- fit on the round button. */
+  .mbtn.gear { width: clamp(56px, 13vw, 66px); height: clamp(56px, 13vw, 66px);
+    font-size: 14px; background: rgba(0, 0, 0, 0.5); }
+
+  /* ---- Mini-map (Rider POV mode only) + look buttons (POV only) ---- */
+  /* Ride panel: dark-slate glass, like the top bar, white type.
+     Below the mini-map in POV (mini-map is 78-~190 px), and
+     near the top when the mini-map is hidden (not POV). */
+  #ridePanel { position: fixed; top: 200px; right: 12px; z-index: 15;
+    width: 180px; background: rgba(15, 23, 42, 0.75);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.25); border-radius: 14px;
+    color: #fff; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  body:not(.pov) #ridePanel { top: 78px; }
+  #ridePanel .ride-speed { font-size: 28px; font-weight: 800; line-height: 1.1; }
+  #ridePanel .ride-speed .ride-unit { font-size: 13px; font-weight: 700; opacity: 0.85; }
+  #ridePanel .ride-row { display: flex; justify-content: space-between;
+    font-size: 13px; font-weight: 700; margin-top: 6px; opacity: 0.95; }
+  /* Circular speedometer, bottom-left: dark-glass disc with a
+     yellow arc whose length is the speed fraction (0-25 km/h).
+     pointer-events none so it never blocks the steering pad.
+     On touch devices it sits above the steering pad (bottom
+     92 px) instead of under it; on desktop it is in the corner. */
+  #speedo { position: fixed; left: 12px; bottom: 12px; width: 120px; height: 120px;
+    z-index: 15; pointer-events: none; background: rgba(0,0,0,0.5);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.25); border-radius: 50%;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  body.touch #speedo { bottom: 92px; }
+  #speedo svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  #speedo .speedo-text { position: absolute; inset: 0; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; }
+  #speedo .speedo-num { font-size: 30px; font-weight: 800; line-height: 1; }
+  #speedo .speedo-unit { font-size: 11px; font-weight: 700; opacity: 0.85; }
+  #speedo .speedo-gear { font-size: 12px; font-weight: 800; color: #f5c518; margin-top: 2px; }
+  #minimap { position: fixed; top: 78px; right: 12px; z-index: 15;
+    background: rgba(15,23,42,0.70); -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px); padding: 5px; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.14); display: none; }
+  #minimap canvas { display: block; width: min(180px, 42vw); height: auto; }
+  body.pov #minimap { display: block; }
+  #lookControls { position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 104px; z-index: 15; display: none; gap: 12px; }
+  body.pov #lookControls { display: flex; }
+  /* On touch devices the right mobile pad is now taller (CAM row
+     above gear/brake/gas), so the POV look buttons sit above it
+     instead of overlapping it. Desktop POV is unchanged. */
+  body.touch.pov #lookControls { bottom: 178px; }
+  .lookbtn { width: 56px; height: 56px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.7); background: rgba(0,0,0,0.55);
+    color: #fff; font-size: 20px; font-weight: 800; display: flex;
+    align-items: center; justify-content: center; user-select: none;
+    -webkit-user-select: none; touch-action: none; cursor: pointer; }
+  .lookbtn.pressed { background: rgba(245,197,24,0.9); color: #111; }
+  @media (max-width: 700px) {
+    #topbar { top: 8px; left: 8px; right: 8px; padding: 7px 10px; gap: 6px; }
+    #topbar .station { font-size: 14px; }
+    #topbar .hint { font-size: 12px; min-width: 0; flex-basis: 100%; }
+    #topbar .score, #topbar .speed, #topbar .gear { font-size: 13px; }
+    #topbar .timer { display: none; }
+    #topbar button { padding: 6px 10px; font-size: 12px; }
+    #toast { top: 118px; font-size: 14px; }
+    #minimap { top: 118px; }
+    .card { padding: 18px; }
+    .card h1 { font-size: 21px; }
+  }
+  @media (max-width: 380px) {
+    #topbar .hint { font-size: 11.5px; }
+    .lookbtn { width: 48px; height: 48px; font-size: 17px; }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<!-- Top bar: station, hint, live score, speed, camera + restart -->
+<div id="topbar">
+  <span class="station" id="stationName">Figure 8</span>
+  <span class="hint" id="stationHint">Turn right at entry: right island clockwise first, then left island counter-clockwise, exit on the right lane.</span>
+  <span class="score" id="scoreText">Score: 70 / 70</span>
+  <span class="speed" id="speedText">0 km/h</span>
+  <span class="gear" id="gearText">Gear: [1]</span>
+  <span class="timer" id="timerText">Time: 0 s</span>
+  <span class="indicator" id="indicatorText">Signal: OFF</span>
+  <button id="cameraBtn" type="button">Camera: Chase</button>
+  <button id="arrowsBtn" type="button">Arrows: ON</button>
+  <button id="restartBtn" type="button">Restart</button>
+</div>
+
+<div id="toast"></div>
+
+<!-- Mini-map: drawn by JS, shown only in Rider POV mode (body.pov) -->
+<div id="minimap"><canvas id="minimapCanvas" width="200" height="120"></canvas></div>
+
+<!-- Ride panel: right side, below the mini-map in POV (below the
+     top bar when the mini-map is hidden). Speed, distance and
+     time, in the same dark-slate glass style as the top bar.
+     Score and station stay in the top bar, unchanged. -->
+<div id="ridePanel">
+  <div class="ride-speed"><span id="rideSpeed">0</span><span class="ride-unit"> km/h</span></div>
+  <div class="ride-row"><span>Distance</span><span id="rideDistance">0.00 km</span></div>
+  <div class="ride-row"><span>Time</span><span id="rideTime">0 s</span></div>
+</div>
+
+<!-- Circular speedometer, bottom-left (see CSS + updateHUD).
+     Arc = speed fraction of the 25 km/h gear-3 top speed. -->
+<div id="speedo" aria-hidden="true">
+  <svg viewBox="0 0 120 120">
+    <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="10" />
+    <circle id="speedoArc" cx="60" cy="60" r="50" fill="none" stroke="#f5c518" stroke-width="10"
+      stroke-linecap="round" stroke-dasharray="314.16" stroke-dashoffset="314.16" />
+  </svg>
+  <div class="speedo-text">
+    <div class="speedo-num" id="speedoSpeed">0</div>
+    <div class="speedo-unit">km/h</div>
+    <div class="speedo-gear" id="speedoGear">Gear 1</div>
+  </div>
+</div>
+
+<!-- Look buttons: shown only in Rider POV mode (body.pov), all devices -->
+<div id="lookControls">
+  <div class="lookbtn" data-look="left" aria-label="Look left (Q)">&#9664; LOOK</div>
+  <div class="lookbtn" data-look="right" aria-label="Look right (E)">LOOK &#9654;</div>
+</div>
+
+<!-- Mobile controls (JS adds body.touch only on touch devices):
+     left pad = steering, right pad = gear / brake / gas, CAM
+     above the right pad. All ids and data-input values are
+     unchanged, so the input wiring below still works. -->
+<div id="mobileControls">
+  <div class="pad">
+    <div class="mbtn" data-input="left" aria-label="Steer left">&#9664;</div>
+    <div class="mbtn" data-input="right" aria-label="Steer right">&#9654;</div>
+  </div>
+  <div class="pad right-zone">
+    <div class="cam-row">
+      <div class="mbtn cam" id="mobileCameraBtn" aria-label="Cycle camera">CAM</div>
+      <div class="mbtn cam" id="indicatorBtn" aria-label="Toggle left signal">IND</div>
+    </div>
+    <div class="pad">
+      <div class="mbtn gear" id="gearDownBtn" aria-label="Shift down a gear">&#8722;</div>
+      <div class="mbtn gear" id="gearUpBtn" aria-label="Shift up a gear">+</div>
+      <div class="mbtn brake" data-input="brake" aria-label="Brake">&#9632;</div>
+      <div class="mbtn gas" data-input="gas" aria-label="Accelerate">&#9650;</div>
+    </div>
+  </div>
+</div>
+
+<!-- Start screen -->
+<div class="overlay" id="startScreen">
+  <div class="card">
+    <h1>&#127949; Nepal Driving Licence Trial</h1>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 1 of 10 - First playable game. Only Figure 8 and the plank score (30 points, pass 21). The full ground is drawn, but the light, bumps, ramp and U-turn rules are not active yet. Known issue in this commit: Figure 8 fails instantly when you cross the outer line - there is no 2 second grace yet, and the timer keeps running even when you are stopped.</b></p>
+    <p><b>Category A - Bike.</b> A simplified version of the Department of
+    Transport Management trial, on one flat test ground. Finish all
+    stations to get your score.</p>
+    <h2>Route (in order)</h2>
+    <ul>
+      <li><b>1. Figure 8</b> - official layout: two 3 m islands, centres
+        4.5 m apart on the centre axis, 1.5 m lane around each.
+        Enter from the RIGHT side and follow the top-bar hint,
+        step by step: turn south at entry, go east along the
+        south side, north through the middle, clockwise around
+        the right island (north / east / south), north through
+        the middle again, counter-clockwise around the left
+        island (north / west / south), then exit east on the
+        right (south) lane. Entering from the left, or riding
+        in reverse, is an instant Wrong Entry Direction fail
+        (-100 pts).
+        There is NO artificial speed limit in the Figure 8
+        area any more (removed 2026-10-29): speed there is
+        entirely yours - manual gear, throttle, and engine
+        braking. Gear 1 at low speed is still the way through
+        the tight turns; going fast widens your line and can
+        still put you over the outer line or into an island,
+        and those penalties still apply. The Figure 8 track surface is completely
+        clean: one single merged 8-shaped surface with one
+        continuous white boundary line, islands 0.1 m high
+        with cones - no arrows, floor markers or guide overlays
+        there at all, whatever the Arrows toggle says. Use the
+        top-bar hint and, in Rider POV mode, the mini-map.</li>
+      <li><b>2. STOP line</b> - come to a full stop for 0.5 s at the white
+        STOP line, just before the plank.</li>
+      <li><b>3. Narrow plank</b> - 10 m long, 50 cm wide, slightly raised.
+        Keep both wheels on it, and do not stop on it (that counts as a foot down).</li>
+      <li><b>4. U-Turn station</b> - north-side pocket, just after the
+        plank: turn left off the main lane at x = 10, into a
+        semicircle lane 2 m wide (outer span 10 m, outer radius
+        5 m, inner radius 3 m, centre (6, -4)). First press
+        <b>L</b> (PC) or <b>IND</b> (mobile) for the left signal -
+        entering the arc without it is -5. Then hold
+        <b>LEFT</b> through the north semicircle (east -&gt; north
+        -&gt; west), staying in the lane: a first touch outside
+        the white borders is -10, staying outside for 2 s
+        while moving fails the trial, and going the wrong way
+        (around the south side) fails. Holding LEFT works
+        here even though full lock alone would cut inside:
+        inside the arc only, steering is capped to the exact
+        partial lock for the 4.0 m lane centre, so a held LEFT
+        follows the lane. Exit heading south at x = 2, then
+        left again to east on the main lane.</li>
+      <li><b>5. Traffic light signal</b> - eastbound, after the U-turn:
+        stop line at x = 16. The light is red on arrival and turns
+        green after a random 2-4 s. Stop fully before the white
+        line while it is red; crossing the line on red is -5.
+        If you arrive after it has already turned green, go.</li>
+      <li><b>6. Road bumps</b> - 5 speed bumps, eastbound, centres
+        x = 20, 22, 24, 26, 28, each 1 m long, 2 m wide, 10 cm high.
+        Cross them in Gear 1, under 12 km/h, straight on: the
+        wheels roll over each bump one at a time (the 1.34 m
+        wheelbase is longer than a 1 m bump), the chassis rises
+        up to about 5 cm with a small suspension bounce, and each
+        bump slows you slightly. Crossing faster than 12 km/h,
+        in a gear other than 1, or at a steep entry angle
+        (over 30 degrees) costs -5 once, and crossing faster
+        than 12 km/h or at over 20 degrees makes the handlebar
+        wobble for about 1 s. Skipping bumps (reaching the
+        finish with fewer than 5 crossed) is -5 at the finish.</li>
+      <li><b>7. Inclined / declined ramp stops (final station)</b> -
+        eastbound on the main lane (z = 0), after the bumps:
+        ride up the 6 m, 10&#176; ramp, stop fully for 0.5 s on the
+        uphill (white line + STOP sign halfway up, at x = 35),
+        restart smoothly in Gear 1 without rolling back more
+        than 0.5 m, ride over the 3 m flat top at 1.0 m height,
+        then stop fully for 0.5 s on the downhill (second white
+        line + STOP sign halfway down, at x = 44, holding the
+        brake - coasting alone cannot hold the bike on the
+        decline), then down the 6 m decline and east through
+        the finish gate at x = 50.</li>
+    </ul>
+    <h2>Scoring (implemented stations only)</h2>
+    <p>Figure 8 = 20, Narrow plank = 10, U-Turn = 10,
+    Traffic light = 10, Road bumps = 10, Ramp stops = 10.
+    Total <b>70 points, pass mark 70% (49 points)</b>. The real
+    DoTM test is 100 points / 7 categories; this game remains
+    a simplified implemented subset, not a full 100-point
+    rescale - no per-station 100-point values were given, so
+    none are invented. First island touch: -5. Second island touch, staying
+    outside the Figure 8 outer line for 2 seconds while moving
+    (a brief overshoot is only a warning - steer back inside; the timer
+    pauses when you are stopped, so stopping on the line to
+    think does not fail you), Wrong Entry Direction (left entry
+    or reverse riding, -100 pts), or leaving
+    the plank: fail.
+    Skipping the STOP line: -5. Touching a U-turn border: -10
+    once, staying outside it for 2 s while moving: fail, going
+    the wrong way in the U-turn: fail, entering the U-turn
+    without the left signal: -5. Skipping the U-turn entirely
+    (reaching the finish without it): U-turn points lost, and
+    the light, bumps and ramp after it do not count either,
+    so skipping it cannot pass. Skipping either ramp stop
+    (uphill or downhill), or rolling back
+    more than 0.5 m after a ramp stop: -5 each (ramp score
+    floored at 0, so missing both stops cannot take the
+    ramp below 0).
+    Running the red light: -5. Crossing a bump too fast
+    (over 12 km/h), in a gear other than 1, or too steeply
+    (over 30 degrees): -5 once. Skipping bumps: -5 at the finish.
+    Bumps score is floored at 0, like the ramp.</p>
+    <h2>Controls</h2>
+    <ul>
+      <li><b>Gears (manual, no reverse):</b> <b>N</b> (gas does nothing,
+        bike coasts), <b>Gear 1</b> - max 10 km/h, quick pickup, best
+        for Figure 8 and the plank, <b>Gear 2</b> - max 18 km/h,
+        <b>Gear 3</b> - max 25 km/h, for straights. The trial starts
+        in <b>Gear 1</b>, and every Retry restarts in Gear 1. The
+        current gear is shown in the top bar as <b>Gear: [N] / [1] /
+        [2] / [3]</b>. Shifting down to a lower gear while fast
+        engine-brakes you down to that gear's top speed; shifting
+        to Neutral coasts with no engine braking.</li>
+      <li><b>PC:</b> Arrow keys or WASD to steer / accelerate / brake.
+        <b>Space</b> = brake. <b>Shift up: Shift, PageUp, or R</b>
+        (while playing). <b>Shift down: Control, PageDown, Z,
+        or F.</b> One gear per press - holding the key does not
+        run through gears. <b>L</b> = left signal on / off (for
+        the U-turn; the top bar shows Signal: LEFT / OFF and
+        an amber light blinks on the bike). The trial now
+        starts in <b>Rider POV</b>, with the scooter cockpit
+        (handlebar, grips, levers, mirrors, backlit speedo)
+        at the bottom of the screen. <b>C</b> = camera
+        (chase / top-down / Rider POV, in that order). In Rider
+        POV, <b>Q / E</b> look left / right up to 60 degrees.
+        On the fail / finish screen, <b>R</b> still means Retry,
+        as before.</li>
+      <li><b>Mobile:</b> on-screen &#9664; &#9654; GO / STOP buttons
+        (multi-touch works - hold GO and steer at the same time),
+        <b>GEAR + / GEAR -</b> next to GO / STOP (tap while holding
+        GO and steering - it shifts instantly and does not cancel
+        them), <b>CAM</b> cycles the camera, <b>IND</b> toggles the
+        left signal for the U-turn, and in Rider POV mode
+        LOOK buttons appear at the bottom centre.</li>
+      <li><b>Physics (grounded):</b> the bike tracks the front wheel -
+        sideways velocity is damped out in ~0.2 s, so it does not
+        slide sideways. Releasing gas in <b>Gear 1</b> engine-brakes
+        hard (10 km/h to a stop in ~0.8 s), and braking below
+        3 m/s is sharper (12 m/s&#178;) and snaps to exactly zero
+        below 0.5 m/s, for a precise stop at the STOP line.
+        Steering in Gear 1 is sharpest; minimum turn radius is
+        1.8 m and steering does nothing at a standstill. Inside
+        the U-turn arc only, steering is capped to the 4.0 m
+        lane centre (see the U-turn item above), so holding
+        LEFT there is a clean 180 deg turn, not a cut inside.</li>
+      <li><b>Guide arrows:</b> <b>Arrows: ON / OFF</b> (top bar, and the
+        button below) shows or hides directional arrows and yellow
+        route dashes <i>outside</i> the Figure 8 zone. Figure 8
+        itself always stays clean, with or without arrows.</li>
+    </ul>
+    <p>The road bumps are now a scored station on the main
+    route (see above), not a decoration. Category B (Car) is
+    still not scored or playable - bike only.</p>
+    <button class="btn" id="startBtn" type="button">Start trial</button>
+    <button class="btn secondary" id="arrowsBtnStart" type="button">Arrows: ON</button>
+  </div>
+</div>
+
+<!-- Result / fail screen -->
+<div class="overlay hidden" id="resultScreen">
+  <div class="card">
+    <h1 id="resultTitle">Result</h1>
+    <p id="resultReason"></p>
+    <div class="big" id="resultScore"></div>
+    <table class="breakdown" id="breakdown"></table>
+    <p id="resultVerdict"></p>
+    <button class="btn" id="retryBtn" type="button">Retry</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   SECTION 1 - CONFIG
+   Every dimension, speed and score value lives here. Tweak these and
+   the track, the bike and the scoring all follow. Nothing below this
+   section hard-codes a station size or a point value (except the
+   small visual helpers, which are cosmetic only).
+   ===================================================================== */
+var CONFIG = {
+  // --- Scoring: implemented stations only (real test = 100, 7 categories) ---
+  // U-turn re-inserted 2026-10-29: 10 points, total 60 -> 70,
+  // pass 42 -> 49 (70%). This is still a simplified subset,
+  // not a full 100-point rescale: no per-station 100-point
+  // values were given, so none are invented (see start
+  // screen scoring paragraph, which says this plainly).
+  points: { figure8: 20, plank: 10, uturn: 0, signal: 0, bumps: 0, ramp: 0 }, // implemented total = 30 (this commit)
+  passFraction: 0.70,                            // 70% of implemented total
+  penalties: { islandFirstTouch: 5, stopSkipped: 5, redLight: 5,
+             bumpsHighSpeed: 5, bumpsSkipped: 5,
+             uturnBorder: 10, uturnIndicator: 5,
+             rampStopSkipped: 5, rampDownStopSkipped: 5, rampRollback: 5 },
+
+  // --- Vehicle: active vehicle is the bike. The car entry is a
+  // placeholder config so a Category B mode can be added later by
+  // switching CONFIG.activeVehicle to 'car' and adding a car model
+  // in buildVehicle() (see the TODO there). Physics below already
+  // reads wheel offsets / track width from the active config, so
+  // wheel-track checks work for a 4-wheel vehicle too. ---
+  activeVehicle: 'bike',
+  vehicles: {
+    bike: {
+      label: 'Bike (Category A)',
+      // Scale, verified against the track (all metres), 1:1 for a
+      // standard 125-150cc commuter bike (Pulsar/FZ class):
+      // length = wheelbase 1.34 + 2 x wheel radius 0.33 = 2.00 m
+      // exactly (front wheel front edge +1.00, rear -1.00), inside
+      // the requested 1.9-2.0 m range.
+      // Width = handlebar bar 0.75 m exactly, mirrors included
+      // (mirror centres +/-0.32, mirror depth 0.10 -> outer edge
+      // +/-0.37, so total width with mirrors is 0.74 m, i.e. the
+      // 0.75 m handlebar width). Body/tank/seat are all narrower
+      // than 0.75 m. So the bike fits the 1.5 m Figure 8 lane with
+      // (1.5 - 0.75) / 2 = 0.375 m clearance each side when centred,
+      // and the 3.0 m ramp lane with 1.125 m each side, and
+      // the 2.0 m bumps lane with 0.625 m each side.
+      length: 2.0, width: 0.75, wheelbase: 1.34, wheelRadius: 0.33,
+      maxSpeedKmh: 25,        // trial-ground speed limit, 6.94 m/s
+      accel: 3.2,              // m/s^2, gas (fallback if gears missing)
+      brakeDecel: 7.0,         // m/s^2, brake
+      coastDecel: 0.7,         // m/s^2, no pedal
+      // Manual gears: index = gear number, 0 = Neutral. No reverse.
+      // Top speed, acceleration, gas-off engine braking (coastDecel)
+      // AND steering response all come from the current gear, so
+      // the physics below never uses maxSpeedKmh / accel directly
+      // while gears are present. Gear 1 is quick off the line
+      // (4.2 m/s^2) but capped at 10 km/h, so it stays inside the
+      // Figure 8 lane (turn radius 1.8 + 0.05 x 2.78 = 1.94 m) and
+      // is precise on the 50 cm plank. Its gas-off engine braking
+      // is strong (3.5 m/s^2: 10 km/h to a stop in ~0.8 s, ~1.1 m),
+      // so releasing gas in Gear 1 stops the glide immediately.
+      // Gear 2: 18 km/h, 3.2 m/s^2, engine braking 1.8 m/s^2.
+      // Gear 3: 25 km/h, slower pickup (2.4 m/s^2), engine braking
+      // 1.2 m/s^2, for straights. Neutral: gas does nothing, the
+      // bike coasts freely (0.7 m/s^2, no engine braking) and the
+      // brake still works. steerResponse is the steering smoothing
+      // rate per second: Gear 1 is sharpest (30/s, ~0.07 s to
+      // 90% lock, so the heading follows the input with almost
+      // no lag), Gear 3 stays calmer (10/s).
+      gears: [
+        { label: 'N', maxSpeedKmh: 0, accel: 0, coastDecel: 0.7, steerResponse: 10 },
+        { label: '1', maxSpeedKmh: 10, accel: 4.2, coastDecel: 3.5, steerResponse: 30 },
+        { label: '2', maxSpeedKmh: 18, accel: 3.2, coastDecel: 1.8, steerResponse: 14 },
+        { label: '3', maxSpeedKmh: 25, accel: 2.4, coastDecel: 1.2, steerResponse: 10 }
+      ],
+      // Lateral grip: how fast sideways velocity is damped out,
+      // per second (see the velocity-vector physics in animate).
+      // 18/s means a sideways component falls to ~16% in 0.1 s
+      // and ~3% in 0.2 s - the bike tracks the front wheel instead
+      // of sliding sideways. Braking damps even harder (30/s).
+      lateralDamping: 18,
+      minTurnRadius: 1.8,      // metres, at low speed / full lock
+      // Dynamic turn radius, tied to steering, not to velocity
+      // lag: radius = minTurnRadius + factor x speed, so in
+      // Gear 1 (0-10 km/h, 0-2.78 m/s) radius is only
+      // 1.80-1.94 m - inside the requested 1.8-2.2 m, and well
+      // inside the 1.5-3.0 m Figure 8 lane. At 25 km/h it is
+      // still only 2.15 m, so there is no high-speed understeer
+      // pushing the front tyre over the outer line. Kinematic
+      // steering angle = atan(wheelbase / radius): 36.7 deg at
+      // 1.8 m, 35.1 deg at 8 km/h (1.91 m), 34.6 deg at 10 km/h
+      // (1.94 m). A true 45 deg kinematic angle would need
+      // radius = 1.34 / tan(45 deg) = 1.34 m, which is INSIDE
+      // the 1.5 m island radius - the bike would hit the
+      // island - so 1.8 m (36.7 deg) is the tightest safe
+      // radius; the handlebar mesh itself turns a full 45 deg
+      // at full lock (see syncBikeMesh). The old radius
+      // 2.5 + 0.12 x speed gave 2.83 m at Gear 1 max, only
+      // 0.32 m from the 3.15 m outer fail line, which is why
+      // a full-lock back turn kept drifting over it.
+      turnRadiusSpeedFactor: 0.05,
+      // Steering does nothing at or below this speed, so there is
+      // no spin-in-place: heading only changes with forward motion,
+      // and yaw rate = speed / radius, so at speed 0 yaw is 0.
+      // Lowered 0.5 -> 0.2 m/s (0.72 km/h) so the bike starts
+      // turning almost as soon as it creeps forward in Gear 1,
+      // instead of waiting until 1.8 km/h. At 0.2 m/s the yaw
+      // rate at full lock is still only 0.11 rad/s, so this
+      // does not allow a spin-in-place.
+      steerMinSpeed: 0.2,      // m/s, ~0.72 km/h
+      // Wheel-track points, local coords: x = forward, z = lateral.
+      // Bike wheels sit on the centreline (z = 0); a car would list
+      // four points with z = +/- trackWidth/2. These points - not
+      // the bike centre - are used for every line/boundary check.
+      wheelOffsets: [{ x: 0.67, z: 0 }, { x: -0.67, z: 0 }],
+      bodyColour: 0xd32f2f, riderColour: 0x1e5aa8, helmetColour: 0xf5c518
+    },
+    car: { // NOT selectable yet - shape only, for a future Category B mode.
+      label: 'Car (Category B) - coming later',
+      maxSpeedKmh: 25, accel: 2.8, brakeDecel: 7.0, coastDecel: 0.7,
+      gears: [
+        { label: 'N', maxSpeedKmh: 0, accel: 0, coastDecel: 0.7, steerResponse: 10 },
+        { label: '1', maxSpeedKmh: 10, accel: 4.2, coastDecel: 3.5, steerResponse: 18 },
+        { label: '2', maxSpeedKmh: 18, accel: 3.2, coastDecel: 1.8, steerResponse: 14 },
+        { label: '3', maxSpeedKmh: 25, accel: 2.4, coastDecel: 1.2, steerResponse: 10 }
+      ],
+      lateralDamping: 18,
+      minTurnRadius: 4.5, turnRadiusSpeedFactor: 0.12, steerMinSpeed: 0.5,
+      wheelOffsets: [{ x: 1.3, z: 0.8 }, { x: 1.3, z: -0.8 },
+                     { x: -1.3, z: 0.8 }, { x: -1.3, z: -0.8 }],
+      bodyColour: 0x1565c0, riderColour: 0x333333, helmetColour: 0x333333
+    }
+  },
+
+  // --- Ground (metres) ---
+  ground: { width: 150, depth: 90 },
+
+  // --- Start / finish ---
+  // Finish is east of the final ramp, heading east (2026-10-29
+  // reorder). There is no return lane any more.
+  start: { x: -54, z: 0, heading: 0 }, // heading 0 = east
+  finish: { x: 50, z: 0 },             // east of the ramp, heading east (shifted +10 with U-turn)
+
+  // --- Station 1: Figure 8, official Nepal layout ---
+  // Two islands on the ride-direction (centre) axis, east-west.
+  // Island diameter 3.0 m (radius 1.5), centres 4.5 m apart, so
+  // the gap between island edges is 1.5 m - that gap, at the
+  // middle point, is where the rider crosses from one loop to
+  // the other. Lane 1.5 m wide around each island, so outer
+  // radius = 1.5 + 1.5 = 3.0 m, lane-centre radius = 2.25 m.
+  // Outer circles overlap by 3 + 3 - 4.5 = 1.5 m. The painted
+  // boundary is the UNION of the two outer circles (see the
+  // track builder: two major ring arcs meeting at the circle
+  // intersections), never the two full circles and never the
+  // overlapping arcs inside the neck.
+  fig8: {
+    left: { x: -40.25, z: 0 }, right: { x: -35.75, z: 0 },
+    midpointX: -38, centreDistance: 4.5,
+    islandRadius: 1.5, islandHeight: 0.1, laneWidth: 1.5, outerRadius: 3.0, laneCentreRadius: 2.25,
+    // FIGURE 8 RENDERING 2026-10-29: ONE merged surface + ONE
+    // boundary ribbon (see buildTrack, fig8UnionOutline). No
+    // two-ring arcs, no overlapping triangles, no coplanar
+    // paint at the same height - that was the flicker: the
+    // old two RingGeometry arcs overlapped each other in a
+    // small lens at both circle intersections, at the same
+    // y = 0.02, so their triangles z-fought. The new surface
+    // is a single ShapeGeometry at surfaceY, the boundary is
+    // a single ribbon strip at boundaryY (0.02 higher, with
+    // polygonOffset), and both use DoubleSide so winding
+    // cannot hide them from above.
+    surfaceY: 0.02, surfaceColour: 0x707070,
+    boundaryY: 0.04, boundaryWidth: 0.12,
+    // Entry / exit lanes, on the centre axis, 1.5 m wide, with a
+    // 2 m wide x 5 m long kerb block beside each (north side).
+    // KERB RELOCATION 2026-10-29: the old blocks (centre
+    // z = -1.75) touched the straight-lane north edge (z = -0.75)
+    // with 0.0 m gap, and the entry block's south-east corner
+    // (-43.125, -0.75) was 2.97 m from the left island centre -
+    // INSIDE the 3.0 m outer circle by 0.03 m - so in chase
+    // camera it sat on the white line and blocked the back
+    // turn. The blocks are now 1.0 m further north (centre
+    // z = -2.75, south edge -1.75, a full 1.0 m gap from the
+    // lane edge) AND 1.0 m further outward (entry centre
+    // x = lane mid - 1.0, exit centre x = lane mid + 1.0), so
+    // their closest corners are now 1.25 m (entry) and 1.48 m
+    // (exit) clear of the outer circle, and the whole 1.5 m
+    // circular lane is 100% clear. Kerb blocks are visual
+    // only - they have no collision check - so the relocation
+    // is about a clear line and a clear view, not a physics
+    // barrier, but the new gaps leave no doubt.
+    entryLane: { xStart: -48, xEnd: -43.25, z: 0 },
+    exitLane: { xStart: -32.75, xEnd: -27.5, z: 0 },
+    kerbBlock: { length: 5, width: 2, zCentre: -2.75, outwardShift: 1.0 },
+    outerTolerance: 0.15, islandTolerance: 0.10,
+    // Loop detection, PLAYABILITY FIX 2026-10-28 (see checkFigure8):
+    // checkpoints in order, NOT a full 360 deg angle around each
+    // island. A full circle + the transition back to the middle
+    // made the rider pass the dangerous neck between the islands
+    // twice, grazing the right island twice = instant fail, and
+    // joining a perfect circle with a 1.8 m min turn radius was
+    // not reliably doable with binary keyboard steering. These
+    // six points are all in the lane (centre distance 2.25-2.6 m
+    // from the relevant island, 1.4 m radius to pass). The top-bar
+    // hint always tells the rider the NEXT checkpoint.
+    // Official Nepal DoTM right-side entry, 2026-10-29:
+    // enter from the right (south) side - turn south at entry,
+    // east along the south side, north through the middle -
+    // then clockwise around the RIGHT island first (north /
+    // east / south), north through the middle again, then
+    // counter-clockwise around the LEFT island (north / west
+    // / south), then exit east on the right (south) lane.
+    // Geometry is UNCHANGED: same islands, same outer radius,
+    // same 1.5 m lane, same 1.4 m checkpoint radius. Only the
+    // order and direction changed, so the old left-first
+    // route no longer completes Figure 8 (see checkFigure8:
+    // north of the left island before the right loop is a
+    // Wrong Entry Direction fail).
+    checkpoints: [
+      { x: -40.25, z: -2.6 }, // left north (old left-first route)
+      { x: -38, z: 0 },       // middle neck
+      { x: -35.75, z: 2.6 },  // right south
+      { x: -33.15, z: 0 },    // right east
+      { x: -35.75, z: -2.6 }, // right north
+      { x: -38, z: 0 }        // middle again, then exit east
+    ],
+    checkpointRadius: 1.4,
+    // Outer line grace: seconds the bike CENTRE may stay outside
+    // the union (inside the footprint) before it fails. 2.0 s at
+    // Gear 1 speed (~1 m/s) is ~2 m of travel - enough to correct
+    // a corner overshoot, not enough to leave the loop area.
+    outerGraceSeconds: 0,
+    // NO Figure 8 speed cap, 2026-10-29 removal: the 5 km/h
+    // cap added 2026-10-28 (back-section fix) is gone, by
+    // request. Speed in the loop is now only the gear top
+    // speed, throttle, brake, and engine braking - no
+    // Figure 8-only max, no artificial easing, no toast.
+    // Honest note, not a new limit: the old cap existed
+    // because fast runs failed the loop (at constant speed,
+    // 1.0-1.39 m/s completed with 0 island hits, 2.0 m/s
+    // failed at the east back turn, 2.78 m/s at the
+    // middle -> south diagonal, under the old turn-radius
+    // formula). With the cap gone, a fast run can still
+    // fail exactly the same way - through the unchanged
+    // outer-line grace and island-touch rules below, not
+    // through any speed enforcement. Gear 1 low speed is
+    // still the recommended way through, it is just no
+    // longer enforced.
+    // Wrong-way angle (unwrapped, around the CURRENT island)
+    // past this = fail. Right island first, clockwise =
+    // increasing phi (atan2(z, x) with south = +Z), so a
+    // negative cumulative angle = wrong way there. Left
+    // island second, counter-clockwise = decreasing phi, so
+    // a positive cumulative angle = wrong way there. Reset
+    // when the right loop completes (checkpoint 3).
+    wrongWayRad: 999
+  },
+
+  // --- Station 2: STOP line (right before the plank) ---
+  stop: { lineX: -12, zoneMinX: -15, zoneMaxX: -12, halfWidth: 2.0,
+          stopSpeed: 0.25, stopTimeNeeded: 0.5 }, // m/s, seconds
+
+  // --- Station 3: narrow plank ---
+  plank: { xStart: -10, xEnd: 0, width: 0.5, height: 0.18,
+           edgeTolerance: 0.07, // wheel may stray this far past the edge
+           // Stopping on the plank counts as a foot down:
+           slowSpeed: 0.4, slowTimeLimit: 0.6 },
+
+  // --- Station 4: U-Turn pocket, north side (2026-10-29 re-insertion) ---
+  // Semicircle lane, 2 m wide, 10 m outer span: outer radius
+  // 5 m, inner radius 3 m, lane centre radius 4 m, centre
+  // (6, -4). Entry is the east end of the diameter, (10, -4),
+  // heading north; the arc is the NORTH semicircle (east ->
+  // north -> west), a LEFT turn (heading north -> west ->
+  // south, -180 deg); exit is the west end, (2, -4), heading
+  // south, then left again to east on the main lane. The
+  // bike turns left off the main lane at x = 10 and rejoins
+  // it at x = 2, so downstream stations must be east of
+  // x = 10 in travel order - they are (light at 16).
+  // Border: bike CENTRE distance from the centre must stay
+  // in [3, 5] while in the arc. A first touch outside = -10
+  // once (uturnBorder); staying outside continuously for
+  // graceSeconds (2.0 s) while moving = instant fail, like
+  // the Figure 8 outer line, with the timer pausing when
+  // stopped. Wrong-way angle (phi cumulating negative,
+  // i.e. going around the south side) past 0.6 rad = fail.
+  // Left signal: the rider must have the left indicator ON
+  // (L key, or IND button on mobile) when first entering
+  // the arc; entering without it = -5 once (uturnIndicator).
+  // Steering cap: ONLY while in the arc, |steer| is capped
+  // to effRadius / centreRadius, so holding LEFT (binary
+  // keyboard/mobile input, 0 or 1) follows the 4.0 m lane
+  // centre exactly, instead of cutting inside at the 1.91 m
+  // full-lock radius. This is the analog partial lock a
+  // real handlebar can hold that a keyboard cannot; it
+  // does not change minTurnRadius, gears, or any physics
+  // outside the arc. See checkUturn and the heading code.
+  uturn: {
+    centreX: 6, centreZ: -4, innerRadius: 3, outerRadius: 5, centreRadius: 4,
+    entryX: 10, exitX: 2, graceSeconds: 2.0, wrongWayRad: 0.6
+  },
+
+  // --- Station 5: Traffic light signal, eastbound (2026-10-29) ---
+  // Shifted east by 10 m (was stop line x = 6) so it is after
+  // the U-turn pocket in travel order: the bike rejoins the
+  // main lane at x = 2 and rides east to the light at 16.
+  // Pole north of the lane at (16, -2.5), lamps facing west
+  // toward drivers heading east. Timer starts only after
+  // the U-turn, when the bike is within 8 m before the line,
+  // heading east, in the lane. Red lasts a random 2-4 s,
+  // then green. Crossing the line on red = -5.
+  signal: {
+    stopLineX: 16, laneZ: 0, zoneBefore: 8,
+    redMin: 2.0, redMax: 4.0
+  },
+
+  // --- Station 6: Road bumps, eastbound (2026-10-29) ---
+  // Shifted east by 10 m (was centres 10-18) so they are
+  // after the traffic light at 16. 5 bumps, centres
+  // x = 20, 22, 24, 26, 28 (spacing 2.0 m, so a 1 m gap
+  // between bumps), z = 0, each 1 m long, 2 m wide, 10 cm high.
+  // Height profile is a cosine hump (see bumpHeightAt): height
+  // 0 at both edges, 0.10 m at the centre, slope 0 at the edges,
+  // so the bike does not hit a vertical step. The wheelbase
+  // (1.34 m) is longer than a bump (1 m), so both wheels are
+  // never on one bump at once: the chassis rises at most
+  // about 5 cm (one wheel at 0.10 m, the other at 0), with
+  // a pitch swing as the front wheel, then the rear wheel,
+  // rolls over it. Speed limit 12 km/h = 3.333 m/s: faster
+  // than that, or an entry angle over 20 deg, triggers the
+  // handlebar wobble; faster, a gear other than 1, or an
+  // entry angle over 30 deg costs -5 once (bumpsHighSpeed).
+  // Reaching the finish with fewer than 5 bumps crossed
+  // costs -5 (bumpsSkipped). See checkBumps.
+  bumps: {
+    firstCentreX: 20, count: 5, spacing: 2.0,
+    length: 1, width: 2, height: 0.10, z: 0,
+    speedLimitKmh: 12, speedLimitMs: 12 / 3.6,
+    wobbleAngleDeg: 20, penaltyAngleDeg: 30,
+    dragDecel: 0.5, exitSpeedFactor: 0.97
+  },
+
+  // --- Station 7 (final): Inclined / Declined Ramp Stop (scored) ---
+  // ON the main route, eastbound on the main lane (z = 0), after
+  // the bumps: bumps end at x = 28.5, ramp runs x = 32 to 47,
+  // finish gate at x = 50. Shifted east by 10 m with the
+  // light and bumps, for the U-turn pocket (see above).
+  // Geometry, exactly as specified (see note on slope angle):
+  // up 6 m, flat 3 m, down 6 m, total footprint 15 m (x 32 to 47),
+  // width 3 m (z -1.5 to +1.5), height 1.0 m. With a 6 m run and a
+  // 1.0 m rise the true slope angle is atan(1/6) = 9.46 deg;
+  // slopeDeg 10 is the nominal DoTM figure (6 m at 10 deg would
+  // rise 1.04-1.06 m, within 6 cm of 1.0 m). The game uses the
+  // exact 6 m / 1.0 m height profile for bike height, pitch and
+  // gravity, so the mesh, the y profile and the physics all agree
+  // at 1.0 m, and the angle is 9.5 deg, reported as ~10 deg.
+  // Stop line: middle of the uphill, x = 35, height 0.50 m.
+  // Stop: speed < 0.25 m/s for 0.5 s on the uphill (anywhere on
+  // the uphill, not only exactly on the painted line, so a
+  // 0.5 m early/late stop still counts). Skipping it = -5.
+  // Rollback: after a successful stop, rolling back more than
+  // 0.5 m from the stop position = -5, once. Gravity on the
+  // slope is modelled in animate(): g * slope = 1.61 m/s^2
+  // backward on the uphill, so a bike in Neutral (coast 0.7)
+  // or Gear 3 (coast 1.2) will roll back unless the brake is
+  // held, while Gear 1/2 engine braking (3.5 / 1.8) holds it,
+  // and Gear 1 gas (4.2 - 1.61 = 2.59 m/s^2 net) restarts it
+  // smoothly with no stall and no sideways slide.
+  // DUAL STOPS 2026-10-29: the same stop rule now applies
+  // Uphill stop line at x = 35 (mid-uphill, height
+  // 0.50 m, stopSpeed 0.25 m/s for 0.5 s, as before; holding
+  // brake gives exactly 0, releasing gas in Gear 1 gives
+  // < 0.25 m/s creep, both count as stopped). Downhill stop
+  // line at x = 44 (mid-downhill, height 0.50 m, after the
+  // flat apex): stopSpeed 0.25 m/s for 0.5 s WITH the brake
+  // held - active braking is required here, because gravity
+  // (+1.61 m/s^2 forward on the decline) beats Neutral
+  // (0.7) and Gear 3 (1.2) engine braking, so coasting alone
+  // cannot hold the bike. Skipping either stop = -5 each,
+  // rollback after the uphill stop = -5, ramp score is
+  // floored at 0 (see currentScore), so the ramp total
+  // stays 10 and the game total stays 70 / pass 49.
+  ramp: {
+    xStart: 32, z: 0, upLength: 6, flatLength: 3, downLength: 6,
+    width: 3, height: 1, slopeDeg: 10,
+    stopLineX: 35, downStopLineX: 44, stopSpeed: 0.25, stopTimeNeeded: 0.5,
+    rollbackLimit: 0.5, railingHeight: 0.9, railingOffset: 0.15
+  },
+
+};
+CONFIG.implementedTotal =
+  CONFIG.points.figure8 + CONFIG.points.plank + CONFIG.points.uturn + CONFIG.points.signal +
+  CONFIG.points.bumps + CONFIG.points.ramp; // 70
+CONFIG.passMark = Math.ceil(CONFIG.implementedTotal * CONFIG.passFraction); // 49
+
+
+/* =====================================================================
+   SECTION 2 - SCENE + TRACK BUILDER
+   Only primitives: planes, boxes, cylinders, rings, cones, spheres.
+   No textures, no external images. Y-up in Three.js, so flat things
+   are rotated -90 deg around X and sit a hair above the ground to
+   avoid z-fighting (y = 0.02 for paint, 0.01 for roads).
+   ===================================================================== */
+var canvas = document.getElementById('game');
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+// Shadows, 2026-10-29 visual upgrade: soft PCF shadows, cast
+// only by major objects (bike, islands, kerbs, plank, ramp,
+// gates, signs - set at each creation site, not globally, so
+// flat paint planes never cast a shadow onto themselves).
+// 2048 px over an 160 x 160 m shadow camera keeps the shadow
+// map affordable on mobile; the camera covers the whole
+// track (x -65 to 45, z -30 to 30) with margin.
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Tone mapping, 2026-10-29 realism upgrade: ACESFilmic at
+// exposure 1.0 for realistic colour dynamic range (bright
+// whites roll off instead of clipping flat). Output encoding
+// is deliberately left at the default: adding sRGB output on
+// top of ACES would gamma-brighten every specified hex
+// colour below (asphalt #2A2A2A, grass #3A5F28, cone
+// #FF5500) away from the values the spec names.
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+var scene = new THREE.Scene();
+// Sky gradient atmosphere dome, 2026-10-29 realism upgrade:
+// replaces the flat solid sky background. A large sphere
+// (radius 300, inside the 400 camera far plane) with a custom
+// gradient shader, BackSide so it is seen from inside, soft
+// daylight blue at the zenith fading to horizon warmth at
+// eye level. No shadow, no depth write, never culled, so it
+// can never hide the track or the bike. It is a mesh in the
+// scene, not an external skybox image.
+var skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(300, 32, 15),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: {
+      topColor: { value: new THREE.Color(0x6fa8dc) },
+      horizonColor: { value: new THREE.Color(0xf2ddb0) }
+    },
+    vertexShader: 'varying vec3 vWorldPosition; void main() {' +
+      ' vec4 wp = modelMatrix * vec4(position, 1.0);' +
+      ' vWorldPosition = wp.xyz;' +
+      ' gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform vec3 topColor; uniform vec3 horizonColor;' +
+      ' varying vec3 vWorldPosition; void main() {' +
+      ' float h = normalize(vWorldPosition).y;' +
+      ' float t = pow(max(h, 0.0), 0.6);' +
+      ' gl_FragColor = vec4(mix(horizonColor, topColor, t), 1.0); }'
+  }));
+skyDome.frustumCulled = false;
+scene.add(skyDome);
+// Atmospheric depth, 2026-10-29 cockpit overhaul: fog
+// starts at 120 m, so the whole track (longest sightline
+// ~104 m, start -54 to finish 50) stays unfogged, while
+// buildings at 150-250 m fade into the horizon colour.
+// The sky dome is a custom ShaderMaterial with no fog
+// chunk, so it is not fogged itself.
+scene.fog = new THREE.Fog(0xd8e4ee, 120, 280);
+var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 400);
+camera.position.set(-62, 5, 8);
+// Smoothed chase-camera look target (see chase branch below).
+var chaseLookTarget = new THREE.Vector3(-62, 0.8, 8);
+
+// Lighting, 2026-10-29 realism upgrade: hemisphere light
+// exactly as specified (sky warm sunlight 0xddeeff, ground
+// natural bounce 0x443322, intensity 0.8), plus a low ambient
+// (0.25, down from 0.45, so the stronger hemisphere + ACES
+// tone mapping do not wash the markings out) and the strong
+// directional sun at 1.15. The sun target is the track centre
+// (-10, 0, 0), so the tightened shadow frustum below is
+// centred on the compound instead of on the world origin:
+// 130 x 130 m at 2048 px is about 15.8 px per metre, up from
+// 12.8 px per metre at the old 160 x 160 m frustum, so bike
+// and asphalt shadows are crisper at the same map cost.
+scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+scene.add(new THREE.HemisphereLight(0xddeeff, 0x443322, 0.8));
+var sun = new THREE.DirectionalLight(0xfff2dd, 1.15);
+sun.position.set(30, 60, -20);
+sun.target.position.set(-10, 0, 0);
+scene.add(sun.target);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -65; sun.shadow.camera.right = 65;
+sun.shadow.camera.top = 65; sun.shadow.camera.bottom = -65;
+sun.shadow.camera.near = 10; sun.shadow.camera.far = 200;
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+// Toggleable guide group: EVERY directional arrow and every yellow
+// route dash outside Figure 8 lives in here, and nowhere else.
+// The Arrows toggle shows/hides this whole group at once.
+// Figure 8 markings are never added to this group - Figure 8 has
+// no arrows or dashes at all, so it stays clean in both states.
+var arrowGroup = new THREE.Group();
+scene.add(arrowGroup);
+
+// Materials, 2026-10-29 visual upgrade: MeshStandardMaterial
+// everywhere mat() is used, with roughness (default 0.85, dull
+// paint/concrete) and optional metalness. Standard materials
+// respond to the ambient + hemisphere + directional lights
+// above, so the same colours now have highlights and depth
+// instead of the flat Lambert look. MeshBasicMaterial is
+// still used for lamps and STOP-sign text, which must glow
+// regardless of light, and for the head/tail lights below.
+function mat(colour, opts) {
+  opts = opts || {};
+  return new THREE.MeshStandardMaterial(
+    { color: colour, transparent: !!opts.transparent, opacity: opts.opacity || 1,
+      roughness: opts.roughness !== undefined ? opts.roughness : 0.85,
+      metalness: opts.metalness || 0 });
+}
+function stdMat(colour, roughness, metalness) {
+  return new THREE.MeshStandardMaterial(
+    { color: colour, roughness: roughness, metalness: metalness });
+}
+// Runtime canvas textures (no external images, generated in
+// code like the STOP-sign texture): deterministic speckles
+// via a tiny seeded generator, so the texture is identical
+// on every load. Asphalt: dark grey with light/dark speckle.
+// Turf: green with darker/lighter patches. Hazard: diagonal
+// yellow/black stripes, tiled 4x along a kerb/edge strip.
+function seededRnd(seed) {
+  var v = seed;
+  return function () { v = (v * 1103515245 + 12345) % 2147483648; return v / 2147483648; };
+}
+function asphaltTexture() {
+  // Asphalt, 2026-10-29 cockpit overhaul: 512 px canvas
+  // (was 256) over the same 10 m tile, so aggregate reads
+  // at ~2 cm per pixel instead of ~4 cm. Dark gray
+  // #2A2A2A base, 3000 speckles in three greys, plus a
+  // few faint darker patches for worn areas. No time-of-
+  // day system exists in this game (the sun is fixed
+  // daylight), so the "slightly reflective" look is a
+  // fixed sun sheen from the material below (roughness
+  // 0.65, metalness 0.05), not a dynamic wet/dry state.
+  var cv = document.createElement('canvas'); cv.width = 512; cv.height = 512;
+  var c2 = cv.getContext('2d');
+  c2.fillStyle = '#2a2a2a'; c2.fillRect(0, 0, 512, 512);
+  var rnd = seededRnd(12345);
+  var speck = ['#323232', '#222222', '#3a3a3a'];
+  for (var i = 0; i < 3000; i++) {
+    c2.fillStyle = speck[Math.floor(rnd() * speck.length)];
+    var sz = 1 + Math.floor(rnd() * 3);
+    c2.fillRect(Math.floor(rnd() * 512), Math.floor(rnd() * 512), sz, sz);
+  }
+  for (var j = 0; j < 12; j++) {
+    c2.fillStyle = 'rgba(0,0,0,0.08)';
+    c2.beginPath();
+    c2.ellipse(Math.floor(rnd() * 512), Math.floor(rnd() * 512), 40 + rnd() * 60, 25 + rnd() * 40, rnd() * 3, 0, Math.PI * 2);
+    c2.fill();
+  }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(15, 9);
+  return tex;
+}
+// Brick facade + glass storefront textures, 2026-10-29
+// cockpit overhaul: canvas facades, not imported models
+// (the game is limited to one file, no external images).
+// Brick: warm brick courses with mortar lines and dark
+// window rectangles. Glass: blue-grey panels with dark
+// mullions and a diagonal light streak for a storefront
+// sheen. Both are MeshStandardMaterial maps below.
+var brickTextureInstance = null;
+function brickTexture() {
+  if (brickTextureInstance) return brickTextureInstance;
+  var cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+  var c2 = cv.getContext('2d');
+  c2.fillStyle = '#8a4a3a'; c2.fillRect(0, 0, 256, 256);
+  c2.strokeStyle = '#c8b8a8'; c2.lineWidth = 2;
+  for (var y = 0; y <= 256; y += 16) { c2.beginPath(); c2.moveTo(0, y); c2.lineTo(256, y); c2.stroke(); }
+  for (var row = 0; row < 16; row++) {
+    var off = (row % 2) * 16;
+    for (var x = off; x <= 256; x += 32) { c2.beginPath(); c2.moveTo(x, row * 16); c2.lineTo(x, row * 16 + 16); c2.stroke(); }
+  }
+  c2.fillStyle = '#1a2a3a';
+  for (var wy = 16; wy < 240; wy += 64) {
+    for (var wx = 16; wx < 240; wx += 64) { c2.fillRect(wx, wy, 32, 24); }
+  }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2);
+  brickTextureInstance = tex; return tex;
+}
+var glassTextureInstance = null;
+function glassTexture() {
+  if (glassTextureInstance) return glassTextureInstance;
+  var cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+  var c2 = cv.getContext('2d');
+  c2.fillStyle = '#6a8a9a'; c2.fillRect(0, 0, 256, 256);
+  c2.fillStyle = 'rgba(255,255,255,0.18)';
+  c2.beginPath(); c2.moveTo(0, 256); c2.lineTo(128, 0); c2.lineTo(192, 0); c2.lineTo(64, 256); c2.fill();
+  c2.strokeStyle = '#22303a'; c2.lineWidth = 4;
+  for (var x = 0; x <= 256; x += 32) { c2.beginPath(); c2.moveTo(x, 0); c2.lineTo(x, 256); c2.stroke(); }
+  for (var y = 0; y <= 256; y += 64) { c2.beginPath(); c2.moveTo(0, y); c2.lineTo(256, y); c2.stroke(); }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2);
+  glassTextureInstance = tex; return tex;
+}
+function turfTexture() {
+  var cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+  var c2 = cv.getContext('2d');
+  // Turf, 2026-10-29 realism: natural dark-green #3A5F28
+  // base, multi-toned 16 px tile patches (four dark-green
+  // shades, deterministic) plus fine speckle, for a matte
+  // grass look instead of one flat green.
+  c2.fillStyle = '#3a5f28'; c2.fillRect(0, 0, 256, 256);
+  var rnd = seededRnd(98765);
+  var shades = ['#2e4d20', '#3a5f28', '#466e33', '#355c24'];
+  for (var ty = 0; ty < 16; ty++) {
+    for (var tx = 0; tx < 16; tx++) {
+      c2.fillStyle = shades[Math.floor(rnd() * shades.length)];
+      c2.fillRect(tx * 16, ty * 16, 16, 16);
+    }
+  }
+  for (var i = 0; i < 700; i++) {
+    c2.fillStyle = rnd() > 0.5 ? '#2e4d20' : '#4a742f';
+    c2.fillRect(Math.floor(rnd() * 256), Math.floor(rnd() * 256), 3, 3);
+  }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(20, 14);
+  return tex;
+}
+var hazardTextureInstance = null;
+function hazardTexture() {
+  if (hazardTextureInstance) return hazardTextureInstance;
+  var cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
+  var c2 = cv.getContext('2d');
+  // Hazard stripes, 2026-10-29 realism: safety yellow
+  // #E3A008 on dark gray #333333 (was #f5c518 on black).
+  c2.fillStyle = '#333333'; c2.fillRect(0, 0, 128, 128);
+  c2.strokeStyle = '#e3a008'; c2.lineWidth = 18;
+  for (var i = -128; i < 256; i += 36) {
+    c2.beginPath(); c2.moveTo(i, -10); c2.lineTo(i + 138, 138); c2.stroke();
+  }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4, 1);
+  hazardTextureInstance = tex;
+  return tex;
+}
+function hazardMaterial() {
+  return new THREE.MeshStandardMaterial({ map: hazardTexture(), roughness: 0.8, metalness: 0 });
+}
+// Concrete texture for ramp faces (cached, like hazard):
+// light concrete grey with speckle and panel joints.
+var concreteTextureInstance = null;
+function concreteTexture() {
+  if (concreteTextureInstance) return concreteTextureInstance;
+  var cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+  var c2 = cv.getContext('2d');
+  c2.fillStyle = '#969696'; c2.fillRect(0, 0, 256, 256);
+  var rnd = seededRnd(4242);
+  for (var i = 0; i < 800; i++) {
+    c2.fillStyle = rnd() > 0.5 ? '#8a8a8a' : '#a2a2a2';
+    c2.fillRect(Math.floor(rnd() * 256), Math.floor(rnd() * 256), 2, 2);
+  }
+  c2.fillStyle = '#7f7f7f';
+  for (var j = 0; j < 256; j += 64) c2.fillRect(0, j, 256, 2);
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  concreteTextureInstance = tex;
+  return tex;
+}
+function concreteMaterial() {
+  return new THREE.MeshStandardMaterial({ map: concreteTexture(), roughness: 0.9, metalness: 0 });
+}
+// Galvanized steel for signal/sign posts and fence posts:
+// dark steel, metalness 0.8, roughness 0.3, as specified.
+function galvanizedMaterial() {
+  return stdMat(0x4a4f52, 0.3, 0.8);
+}
+// Riding-gear fabric texture: base colour with a fine weave
+// of darker/lighter dots, matte (roughness 0.9 when used).
+function gearTexture(baseColour) {
+  var hex = '#' + ('000000' + baseColour.toString(16)).slice(-6);
+  var cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
+  var c2 = cv.getContext('2d');
+  c2.fillStyle = hex; c2.fillRect(0, 0, 128, 128);
+  var rnd = seededRnd(555);
+  for (var i = 0; i < 400; i++) {
+    c2.fillStyle = rnd() > 0.5 ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.08)';
+    c2.fillRect(Math.floor(rnd() * 128), Math.floor(rnd() * 128), 2, 2);
+  }
+  return new THREE.CanvasTexture(cv);
+}
+function gearMaterial(baseColour) {
+  return new THREE.MeshStandardMaterial({ map: gearTexture(baseColour), roughness: 0.9, metalness: 0 });
+}
+// Chain-link fence texture: transparent background with a
+// diamond wire pattern, tiled along each fence run. The
+// fence planes use alphaTest, so the holes stay holes and
+// the planes cast no solid wall shadow (see fence builder).
+function chainLinkTexture() {
+  var cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+  var c2 = cv.getContext('2d');
+  c2.clearRect(0, 0, 64, 64);
+  c2.strokeStyle = 'rgba(180,185,190,0.9)'; c2.lineWidth = 2;
+  for (var i = -64; i < 128; i += 16) {
+    c2.beginPath(); c2.moveTo(i, 0); c2.lineTo(i + 64, 64); c2.stroke();
+    c2.beginPath(); c2.moveTo(i + 64, 0); c2.lineTo(i, 64); c2.stroke();
+  }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  // 60 tiles along a run: a tile is about 2.6 m on the long
+  // runs, so each diamond reads at roughly 0.65 m from the
+  // track - a readable fence mesh at game distances, rather
+  // than true 5 cm chain-link, which would alias away.
+  tex.repeat.set(60, 2);
+  return tex;
+}
+function addMesh(geo, material, x, y, z, rotY) {
+  var m = new THREE.Mesh(geo, material);
+  m.position.set(x, y, z);
+  if (rotY) m.rotation.y = rotY;
+  scene.add(m);
+  return m;
+}
+// Flat painted strip / road: a plane lying on the ground.
+function flat(w, d, colour, x, z, rotY) {
+  // Markings, 2026-10-29 realism: sharp high-contrast paint
+  // at roughness 0.4 (was 0.6), so white lines stay crisp
+  // under the sun and ACES tone mapping.
+  var m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat(colour, { roughness: 0.4 }));
+  m.rotation.x = -Math.PI / 2;
+  if (rotY) m.rotation.z = rotY; // after X-rotation, Z spins it in the plane
+  m.position.set(x, 0.02, z);
+  scene.add(m);
+  return m;
+}
+function box(w, h, d, colour, x, y, z, rotY) {
+  return addMesh(new THREE.BoxGeometry(w, h, d), mat(colour), x, y, z, rotY);
+}
+// Arrow pointing east (+X) by default; pass heading angle a to aim it.
+// Every arrow goes into arrowGroup (see above), so the Arrows
+// toggle hides it. There is no Figure 8 arrow to put here: Figure 8
+// is deliberately arrow-free, in both toggle states.
+function arrow(x, z, a, colour, scale) {
+  var g = new THREE.Group();
+  var shaft = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.06, 0.28), mat(colour || 0xf5c518));
+  shaft.position.y = 0.05;
+  var head = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.7, 4), mat(colour || 0xf5c518));
+  head.rotation.z = -Math.PI / 2; // cone points +X
+  head.position.set(0.85, 0.05, 0);
+  g.add(shaft); g.add(head);
+  g.position.set(x, 0.02, z);
+  g.scale.setScalar(scale || 1);
+  g.rotation.y = -a; // see header note: rotation.y = -a aims +X along (cos a, sin a)
+  arrowGroup.add(g);
+  return g;
+}
+// Small sign: pole + coloured board (no text in 3D - the top bar names stations).
+function sign(x, z, colour, label) {
+  // 2026-10-29 realism: dark galvanized steel post
+  // (metalness 0.8, roughness 0.3), casting a shadow, and a
+  // board that casts too. Sizes and positions unchanged.
+  var pole = box(0.15, 2.2, 0.15, 0x555555, x, 1.1, z);
+  pole.material = galvanizedMaterial(); pole.castShadow = true;
+  var board = box(2.2, 1.0, 0.12, colour, x, 2.4, z);
+  board.castShadow = true;
+  board.userData.label = label; // kept for future use, not rendered as text
+}
+// STOP sign with readable text, for the ramp stops only.
+// Canvas-generated at runtime (no external image, no font
+// file): red board, white border, white STOP text. The
+// board faces the road: for a sign south of the ramp
+// (z > ramp z), facing north means rotation.y = PI, so
+// the text reads correctly from the ramp, not mirrored.
+// Other signs stay as colour boards (see sign above);
+// the ramp stops are the ones where the rider must see
+// STOP on the slope itself, not only in the top bar.
+function stopSign(x, z) {
+  var stopPole = box(0.15, 2.2, 0.15, 0x555555, x, 1.1, z);
+  stopPole.material = galvanizedMaterial(); stopPole.castShadow = true;
+  var cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 128;
+  var c2 = cv.getContext('2d');
+  c2.fillStyle = '#b00020'; c2.fillRect(0, 0, 256, 128);
+  c2.strokeStyle = '#ffffff'; c2.lineWidth = 10; c2.strokeRect(8, 8, 240, 112);
+  c2.fillStyle = '#ffffff'; c2.font = '900 64px Arial, sans-serif';
+  c2.textAlign = 'center'; c2.textBaseline = 'middle';
+  c2.fillText('STOP', 128, 68);
+  var tex = new THREE.CanvasTexture(cv);
+  var board = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+  board.position.set(x, 2.4, z);
+  // South-side sign: face north (toward the ramp).
+  board.rotation.y = Math.PI;
+  board.castShadow = true;
+  scene.add(board);
+  return board;
+}
+
+(function buildTrack() {
+  var C = CONFIG;
+  // Grass surround, then the flat paved test ground.
+  // Contrast, 2026-10-29: dark asphalt test ground (textured,
+  // roughness 0.95) against green turf surround (textured,
+  // roughness 1.0), so the white lane markings, the grey
+  // Figure 8 surface (0x707070, lighter than the asphalt)
+  // and the yellow route dashes all read clearly. Both
+  // planes receive shadows; neither casts one.
+  var grass = new THREE.Mesh(new THREE.PlaneGeometry(220, 140),
+    new THREE.MeshStandardMaterial({ map: turfTexture(), roughness: 0.9, metalness: 0 }));
+  grass.rotation.x = -Math.PI / 2; grass.position.y = 0;
+  grass.receiveShadow = true; scene.add(grass);
+  var paved = new THREE.Mesh(new THREE.PlaneGeometry(C.ground.width, C.ground.depth),
+    new THREE.MeshStandardMaterial({ map: asphaltTexture(), roughness: 0.65, metalness: 0.05 }));
+  paved.rotation.x = -Math.PI / 2; paved.position.y = 0.01;
+  paved.receiveShadow = true; scene.add(paved);
+
+  // Decorative looping road around the ground (perimeter ring).
+  var loopC = 0x3f3f3f, lx0 = -62, lx1 = 32, lz0 = -22, lz1 = 22, lw = 4;
+  flat(lx1 - lx0, lw, loopC, (lx0 + lx1) / 2, lz0, 0);
+  flat(lx1 - lx0, lw, loopC, (lx0 + lx1) / 2, lz1, 0);
+  flat(lw, lz1 - lz0, loopC, lx0, (lz0 + lz1) / 2, 0);
+  flat(lw, lz1 - lz0, loopC, lx1, (lz0 + lz1) / 2, 0);
+  // A few arrows on the loop, so it reads as a one-way loop.
+  // East loop arrow moved to (32, 10): the old (32, 0) point is now
+  // on the final ramp (x 32 to 47, z 0), so an arrow there would
+  // be hidden inside the ramp solid.
+  arrow(-40, lz0, 0); arrow(0, lz0, 0); arrow(lx1, 10, Math.PI / 2);
+  arrow(0, lz1, Math.PI); arrow(-40, lz1, Math.PI);
+
+  // IN gate (west, at the start) and OUT/finish gate (east of the ramp).
+  function gate(x, z, isAcrossZ, colour) {
+    // Poles either side of the lane, bar across the top.
+    // 2026-10-29 realism: every gate part casts a shadow.
+    var parts = [];
+    if (isAcrossZ) { // lane runs east-west, poles north/south of it
+      parts.push(box(0.25, 3, 0.25, colour, x, 1.5, z - 2));
+      parts.push(box(0.25, 3, 0.25, colour, x, 1.5, z + 2));
+      parts.push(box(0.25, 0.4, 4.4, colour, x, 3.1, z));
+    } else {
+      parts.push(box(0.25, 3, 0.25, colour, x - 2, 1.5, z));
+      parts.push(box(0.25, 3, 0.25, colour, x + 2, 1.5, z));
+      parts.push(box(4.4, 0.4, 0.25, colour, x, 3.1, z));
+    }
+    parts.forEach(function (m) { m.castShadow = true; });
+  }
+  gate(-52, 0, true, 0x1b7a2e);  // IN
+  gate(C.finish.x, C.finish.z, true, 0xd32f2f); // OUT / finish, east of the ramp
+
+  // ---- Figure 8, official layout: islands + ONE merged surface ----
+  // The Figure 8 TRACK SURFACE shows only: one merged 8-shaped
+  // surface, one continuous white boundary ribbon, the two
+  // islands, and their cones. No arrows, no floor markers, no
+  // guide overlays, no faint rings, no full circles, no
+  // overlapping arcs inside the neck - in either Arrows state,
+  // because nothing in this area is in arrowGroup. The kerb
+  // blocks below are physical raised blocks BESIDE the
+  // entry/exit lanes (part of the official layout), not floor
+  // markers on the track, and the signpost is outside the track
+  // (z = -9). Other stations keep their own markings.
+  // Union outline, world XZ, in traversal order: top
+  // intersection (-38, -1.984) -> west around the left circle
+  // -> bottom intersection (-38, +1.984) -> east around the
+  // right circle -> back to the top. Circle intersections:
+  // half the centre distance (2.25 m) over the outer radius
+  // (3 m) gives cos = 0.75, so the intersection angle from
+  // the centre axis is acos(0.75) = 41.4 deg, each major arc
+  // is 360 - 2*41.4 = 277.2 deg, and the neck chord at the
+  // midpoint is 2 * sqrt(9 - 5.0625) = 3.97 m. World angle
+  // phi: point = centre + R * (cos phi, sin phi), where
+  // sin phi is world Z (south positive). Both major arcs
+  // run with phi DECREASING by 277.2 deg.
+  function fig8UnionOutline(nPerArc) {
+    var inter = Math.acos((C.fig8.centreDistance / 2) / C.fig8.outerRadius);
+    var arcLen = Math.PI * 2 - 2 * inter;
+    var pts = []; // {x, z, nx, nz} with outward normal (nx, nz)
+    function arc(centre, phiStart, isLeft) {
+      for (var i = 0; i < nPerArc; i++) {
+        var phi = phiStart - arcLen * i / nPerArc;
+        var x = centre.x + C.fig8.outerRadius * Math.cos(phi);
+        var z = centre.z + C.fig8.outerRadius * Math.sin(phi);
+        pts.push({ x: x, z: z,
+                   nx: Math.cos(phi), nz: Math.sin(phi), left: isLeft });
+      }
+    }
+    // Left: top intersection phi = -inter, decreasing to bottom.
+    arc(C.fig8.left, -inter, true);
+    // Right: bottom intersection phi = PI - inter, decreasing to top.
+    arc(C.fig8.right, Math.PI - inter, false);
+    // Averaged normals at the two waist corners, where the
+    // left and right normals disagree: top waist normal is
+    // pure north (0, -1), bottom waist is pure south (0, +1).
+    // Without this, the ribbon would use the left normal at
+    // the top and the right normal at the bottom, kinking
+    // the strip at exactly the neck corners.
+    pts[0].nx = 0; pts[0].nz = -1;
+    pts[nPerArc].nx = 0; pts[nPerArc].nz = 1;
+    return pts;
+  }
+  [C.fig8.left, C.fig8.right].forEach(function (island) {
+    // Island cylinder, 3 m diameter, height 0.1 m (2026-10-29,
+    // was 0.28 m), with an orange cone on top. Scale check:
+    // the bike is ~2 m long, so the 1.5 m lane is only
+    // slightly wider than the bike, and each island looks small
+    // next to its 6 m outer loop.
+    var h = C.fig8.islandHeight || 0.1;
+    var kerb = new THREE.Mesh(new THREE.CylinderGeometry(
+      C.fig8.islandRadius, C.fig8.islandRadius, h, 24), mat(0xe67e22));
+    kerb.position.set(island.x, h / 2, island.z); kerb.castShadow = true; scene.add(kerb);
+    // Cone, 2026-10-29 realism: vibrant safety orange
+    // #FF5500, glossy roughness 0.2 (was #ff5722 at 0.85),
+    // with a reflective white retro-reflective tape ring
+    // around its middle (a short white cylinder, radius
+    // 0.115 m, just outside the cone radius 0.11 m at that
+    // height, roughness 0.3). Same size and position.
+    var cone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.7, 12), mat(0xff5500, { roughness: 0.2 }));
+    cone.position.set(island.x, h + 0.35, island.z); cone.castShadow = true; scene.add(cone);
+    var tape = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.09, 12),
+      mat(0xffffff, { roughness: 0.3 }));
+    tape.position.set(island.x, h + 0.35, island.z); scene.add(tape);
+  });
+  // ONE merged surface: a single ShapeGeometry whose outline
+  // is the two major arcs above, as ONE closed shape. Shape
+  // coordinates are (x, -z), because ShapeGeometry is rotated
+  // -90 deg around X, mapping shape Y to world -Z. No CSG
+  // library is used (that would need an external library,
+  // breaking the single-file cdnjs-only rule): the union
+  // shape IS the merged geometry, built from the two arcs
+  // that already define the union, with no inner arcs at all.
+  // A canvas texture is not needed either: the shape itself
+  // is the clean surface, at one height, with polygonOffset
+  // so it cannot z-fight with the paved ground below it.
+  (function drawFig8SurfaceAndBoundary() {
+    var F = C.fig8;
+    var inter = Math.acos((F.centreDistance / 2) / F.outerRadius);
+    var arcLen = Math.PI * 2 - 2 * inter;
+    var shape = new THREE.Shape();
+    var interZ = Math.sqrt(F.outerRadius * F.outerRadius -
+      (F.centreDistance / 2) * (F.centreDistance / 2)); // 1.984 m
+    // Explicit moveTo to the top intersection, so the first
+    // absarc cannot add a stray line from the shape origin.
+    shape.moveTo(F.midpointX, interZ);
+    // Left arc, shape angle = -world phi: start +inter,
+    // counter-clockwise (increasing shape angle) by arcLen
+    // to the bottom intersection.
+    shape.absarc(F.left.x, -F.left.z, F.outerRadius, inter, inter + arcLen, false);
+    // Right arc, shape angle: bottom intersection is
+    // - (PI - inter), counter-clockwise by arcLen to the
+    // top intersection (+ (PI - inter) is not the end -
+    // see the code: start = -(PI - inter), end = start +
+    // arcLen, which lands on the top intersection angle).
+    shape.absarc(F.right.x, -F.right.z, F.outerRadius, -(Math.PI - inter), -(Math.PI - inter) + arcLen, false);
+    shape.closePath();
+    var surfMat = mat(F.surfaceColour || 0x707070);
+    surfMat.side = THREE.DoubleSide;
+    surfMat.polygonOffset = true; surfMat.polygonOffsetFactor = -1; surfMat.polygonOffsetUnits = -1;
+    var surf = new THREE.Mesh(new THREE.ShapeGeometry(shape, 64), surfMat);
+    surf.rotation.x = -Math.PI / 2;
+    surf.position.y = F.surfaceY || 0.02;
+    surf.receiveShadow = true;
+    scene.add(surf);
+    // ONE continuous white boundary ribbon: a single strip
+    // following the union outline, width boundaryWidth
+    // (0.12 m), centred on the outline, at boundaryY.
+    // One geometry, one material, shared vertices, no
+    // overlapping triangles, no second arc at the same
+    // height - so no z-fighting, by construction. The
+    // strip closes on itself (last point -> first point).
+    var outline = fig8UnionOutline(96);
+    var halfW = (F.boundaryWidth || 0.12) / 2;
+    var y = F.boundaryY || 0.04;
+    var pos = [], idx = [];
+    outline.forEach(function (p) {
+      pos.push(p.x - p.nx * halfW, y, p.z - p.nz * halfW);
+      pos.push(p.x + p.nx * halfW, y, p.z + p.nz * halfW);
+    });
+    for (var i = 0; i < outline.length; i++) {
+      var j = (i + 1) % outline.length;
+      idx.push(2 * i, 2 * j, 2 * i + 1, 2 * i + 1, 2 * j, 2 * j + 1);
+    }
+    var ribGeo = new THREE.BufferGeometry();
+    ribGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    ribGeo.setIndex(idx);
+    // Flat normals (up) for every vertex, so the white
+    // ribbon is lit evenly from above.
+    var nrm = [];
+    for (var k = 0; k < outline.length * 2; k++) nrm.push(0, 1, 0);
+    ribGeo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    // Figure 8 outline, 2026-10-29 realism: crisp white at
+    // roughness 0.4, matching the other road markings.
+    var ribMat = mat(0xffffff, { roughness: 0.4 });
+    ribMat.side = THREE.DoubleSide;
+    ribMat.polygonOffset = true; ribMat.polygonOffsetFactor = -2; ribMat.polygonOffsetUnits = -2;
+    scene.add(new THREE.Mesh(ribGeo, ribMat));
+  })();
+  // Entry / exit lanes, 1.5 m wide, on the centre axis. Their
+  // floor edge lines are deliberately NOT drawn: the Figure 8
+  // surface stays clean. Only the physical kerb blocks beside
+  // each lane are built: 5 m long (x) x 2 m wide (z), north side,
+  // relocated 2026-10-29 (see CONFIG.fig8.kerbBlock): centre
+  // z = -2.75 (1.0 m gap from the lane edge) and shifted 1.0 m
+  // outward, so no corner sits on or inside the white union
+  // boundary and the circular lane is 100% clear. Their long
+  // axis is X, parallel to the east-west approach paths, and
+  // their X ranges (-49.125 to -44.125 entry, -31.625 to
+  // -26.625 exit) do not even overlap the merged surface
+  // X range (-43.25 to -32.75): entry kerb ends 0.875 m west
+  // of the surface, exit kerb starts 1.125 m east of it.
+  // Kerb blocks, 2026-10-29 visual upgrade: same positions and
+  // clearances as before (completely clear of the track, 1.25 /
+  // 1.48 m clear of the outer circles), but now with the diagonal
+  // yellow/black hazard texture instead of flat grey, so they
+  // read as kerbs rather than grey boxes. Visual only, no
+  // collision check, exactly as before.
+  [C.fig8.entryLane, C.fig8.exitLane].forEach(function (lane, i) {
+    var len = lane.xEnd - lane.xStart, midX = (lane.xStart + lane.xEnd) / 2;
+    var outward = (i === 0 ? -1 : 1) * (C.fig8.kerbBlock.outwardShift || 0);
+    var kb = box(C.fig8.kerbBlock.length, 0.3, C.fig8.kerbBlock.width, 0x888888,
+      midX + outward, 0.15, C.fig8.kerbBlock.zCentre);
+    // Hazard texture is now safety yellow #E3A008 on dark
+    // gray #333333 (see hazardTexture); kerbs also receive
+    // shadows now, so the bike shadow reads on their tops.
+    kb.material = hazardMaterial(); kb.castShadow = true; kb.receiveShadow = true;
+  });
+  sign(-44, -9, 0x1565c0, 'Figure 8');
+
+  // ---- STOP line + plank ----
+  flat(0.5, 4, 0xffffff, C.stop.lineX, 0, 0); // white STOP line across the lane
+  flat(0.5, 4, 0xffffff, C.stop.lineX - 0.9, 0, 0); // second stripe, reads as STOP
+  sign(C.stop.lineX, -4, 0xb00020, 'STOP');
+  var plank = box(C.plank.xEnd - C.plank.xStart, C.plank.height, C.plank.width,
+    0xc98a2d, (C.plank.xStart + C.plank.xEnd) / 2, C.plank.height / 2, 0);
+  plank.name = 'plank'; plank.castShadow = true; plank.receiveShadow = true;
+  // Yellow edge stripes on the plank, so its 50 cm width is obvious.
+  flat(C.plank.xEnd - C.plank.xStart, 0.06, 0xf5c518,
+    (C.plank.xStart + C.plank.xEnd) / 2, -C.plank.width / 2 + 0.03, 0);
+  flat(C.plank.xEnd - C.plank.xStart, 0.06, 0xf5c518,
+    (C.plank.xStart + C.plank.xEnd) / 2, C.plank.width / 2 - 0.03, 0);
+  sign(-5, -4, 0xc98a2d, 'Plank');
+
+  // ---- U-Turn pocket, north side (Station 4, 2026-10-29) ----
+  // Centre (6, -4), lane centre radius 4 m, inner 3 m, outer
+  // 5 m, north semicircle only. RingGeometry is in local XY;
+  // after rotation.x = -pi/2, local +Y maps to world -Z
+  // (north), so theta 0 (east) to pi (west, via north) is
+  // exactly the left-turn arc: entry east (10, -4) heading
+  // north, north point (6, -8), exit west (2, -4) heading
+  // south. The diameter line (z = -4) is OPEN: no barrier
+  // across it, because the entry/exit connectors meet it
+  // there. Lane surface grey (like Figure 8), white boundary
+  // rings at roughness 0.4, connectors as flat strips
+  // (entry x = 10, exit x = 2, each 2 m wide, 4 m long, from
+  // the main lane z = 0 to the diameter z = -4). Cones sit
+  // OUTSIDE the lane centreline, on the outer edge only
+  // (11, -4), (1, -4), (6, -9): a cone ON the entry/exit
+  // centreline would block the bike, so none is placed there.
+  // Sign at (6, -12), 3 m north of the outer edge.
+  (function buildUturn() {
+    var U = C.uturn;
+    var laneGeo = new THREE.RingGeometry(U.innerRadius, U.outerRadius, 64, 1, 0, Math.PI);
+    var laneMat = mat(0x707070, { roughness: 0.85 });
+    laneMat.side = THREE.DoubleSide;
+    var lane = new THREE.Mesh(laneGeo, laneMat);
+    lane.rotation.x = -Math.PI / 2;
+    lane.position.set(U.centreX, 0.02, U.centreZ);
+    lane.receiveShadow = true;
+    scene.add(lane);
+    function boundaryRing(inner, outer) {
+      var g = new THREE.RingGeometry(inner, outer, 64, 1, 0, Math.PI);
+      var m = mat(0xffffff, { roughness: 0.4 });
+      m.side = THREE.DoubleSide;
+      var mesh = new THREE.Mesh(g, m);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(U.centreX, 0.04, U.centreZ);
+      scene.add(mesh);
+    }
+    boundaryRing(U.outerRadius - 0.06, U.outerRadius + 0.06);
+    boundaryRing(U.innerRadius - 0.06, U.innerRadius + 0.06);
+    flat(2, 4, 0x707070, U.entryX, -2, 0);
+    flat(2, 4, 0x707070, U.exitX, -2, 0);
+    function uturnCone(x, z) {
+      var c = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.7, 12),
+        mat(0xff5500, { roughness: 0.2 }));
+      c.position.set(x, 0.35, z); c.castShadow = true; scene.add(c);
+      var t = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.09, 12),
+        mat(0xffffff, { roughness: 0.3 }));
+      t.position.set(x, 0.35, z); scene.add(t);
+    }
+    uturnCone(U.entryX + 1, U.centreZ);
+    uturnCone(U.exitX - 1, U.centreZ);
+    uturnCone(U.centreX, U.centreZ - U.outerRadius);
+    sign(U.centreX, -12, 0x1565c0, 'U-Turn');
+  })();
+
+  // ---- Traffic light, eastbound (Station 5): pole + housing + 3 lamps ----
+  // Pole north of the lane at (16, -2.5), 2.5 m clear of the lane
+  // centre (z = 0). Lamps face WEST (-X), towards drivers heading
+  // east. Stop line across the eastbound lane at x = 16.
+  // Shifted east by 10 m with the U-turn re-insertion (was 6).
+  var SG = C.signal;
+  // 2026-10-29 realism: galvanized steel signal post
+  // (metalness 0.8, roughness 0.3), casting a shadow, and a
+  // housing that casts too. Same size and position.
+  var pole = box(0.18, 3.4, 0.18, 0x333333, 16, 1.7, -2.5);
+  pole.material = galvanizedMaterial(); pole.castShadow = true;
+  pole.name = 'lightPole';
+  var housing = box(0.5, 1.1, 0.5, 0x111111, 16, 3.0, -2.5);
+  housing.castShadow = true;
+  window.__lamps = {}; // filled here, updated by the rules section
+  [['red', 3.35], ['amber', 3.0], ['green', 2.65]].forEach(function (pair) {
+    var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0x222222 }));
+    lamp.position.set(15.72, pair[1], -2.5); scene.add(lamp);
+    window.__lamps[pair[0]] = lamp;
+  });
+  flat(0.5, 2.4, 0xffffff, SG.stopLineX, SG.laneZ, 0); // light stop line
+  sign(16, -4, 0xb00020, 'Traffic light');
+  // Finish line: checker strip across the eastbound lane.
+  for (var i = 0; i < 4; i++) {
+    flat(0.6, 0.6, (i % 2 === 0) ? 0xffffff : 0x111111,
+      C.finish.x, C.finish.z - 1.2 + i * 0.6 + 0.3, 0);
+  }
+
+  // ---- Yellow guide dashes along the route AFTER the Figure 8 ----
+  // New order (2026-10-29 U-turn): Figure 8 exit -> STOP ->
+  // plank -> U-turn pocket (north at x = 10, west at z = -4,
+  // south at x = 2, east again) -> traffic light (x = 16)
+  // -> bumps (x 19.5 to 28.5) -> ramp (x 32 to 47) -> finish
+  // (x = 50). The pocket segments are straight dashes only;
+  // the arc itself is the white ring above, not dashes.
+  // Dashes are skipped on the bumps themselves (they would be
+  // hidden inside the bump solids, as on the ramp) and on the
+  // ramp itself, but they appear in the 1 m gaps between bumps,
+  // so the route still reads through the bumps station.
+  var route = [
+    { x: -26, z: 0 }, { x: -12, z: 0 }, { x: -10, z: 0 }, { x: 0, z: 0 },
+    { x: 10, z: 0 }, { x: 10, z: -4 }, { x: 2, z: -4 }, { x: 2, z: 0 },
+    { x: 16, z: 0 }, { x: 32, z: 0 }, { x: 47, z: 0 }, { x: 50, z: 0 }
+  ];
+  // Direction arrows for the new route only, in arrowGroup.
+  // Figure 8 has no arrows at all. Pocket arrows: north at
+  // the entry connector, west along the diameter, south at
+  // the exit connector, then east arrows after the pocket,
+  // after the bumps, and before the finish.
+  arrow(10, -2, -Math.PI / 2); arrow(6, -4, Math.PI); arrow(2, -2, Math.PI / 2);
+  arrow(14, 0, 0); arrow(30, 0, 0); arrow(49, 0, 0);
+  // White lane edge lines, 2026-10-29 cockpit overhaul:
+  // sharp 0.12 m white lines at z = +/-1.25 m, from the
+  // Figure 8 exit (x = -27) to the finish (x = 50), with
+  // gaps where they would otherwise z-fight or cross a
+  // station: the U-turn connectors (north, x 1-3 and 9-11),
+  // the traffic-light stop line (x 16), and the ramp
+  // (x 32-47, whose width 3 m already covers z +/-1.25).
+  // They clear the plank (z +/-0.25) and the bumps
+  // (z +/-1.0, line inner edge at 1.19 m) by design.
+  (function edgeLines() {
+    function seg(x0, x1, z) {
+      flat(x1 - x0, 0.12, 0xffffff, (x0 + x1) / 2, z, 0);
+    }
+    [[-27, 1], [3, 9], [11, 15.75], [16.25, 32], [47, 50]].forEach(function (sg) { seg(sg[0], sg[1], -1.25); });
+    [[-27, 15.75], [16.25, 32], [47, 50]].forEach(function (sg) { seg(sg[0], sg[1], 1.25); });
+  })();
+  for (var s = 0; s < route.length - 1; s++) {
+    var p0 = route[s], p1 = route[s + 1];
+    var dx = p1.x - p0.x, dz = p1.z - p0.z;
+    var len = Math.sqrt(dx * dx + dz * dz);
+    var steps = Math.floor(len / 1.6);
+    for (var k = 1; k < steps; k++) {
+      var t = k / steps;
+      var dashX = p0.x + dx * t, dashZ = p0.z + dz * t;
+      var ang = Math.atan2(dz, dx);
+      var nearIsland = [C.fig8.left, C.fig8.right].some(function (is) {
+        var ddx = dashX - is.x, ddz = dashZ - is.z;
+        return Math.sqrt(ddx * ddx + ddz * ddz) < C.fig8.islandRadius + 0.3;
+      });
+      if (nearIsland) continue;
+      if (dashX >= C.ramp.xStart && dashX <= C.ramp.xStart + C.ramp.upLength + C.ramp.flatLength + C.ramp.downLength &&
+          Math.abs(dashZ - C.ramp.z) < C.ramp.width / 2) continue;
+      if (bumpHeightAt(dashX, dashZ) > 0) continue;
+      arrowGroup.add(box(0.9, 0.02, 0.18, 0xf5c518, dashX, 0.03, dashZ, -ang));
+    }
+  }
+
+  // ---- Road bumps, Station 5 (CONFIG.bumps), eastbound ----
+  // Visual: each 1 m bump is 10 thin slices across X, each slice
+  // a box whose height is the cosine height at the slice centre
+  // (see bumpHeightAt in the rules). The stepped profile matches
+  // the smooth physics height within about 1.5 cm (the largest
+  // step between slices), with no vertical step at either edge
+  // (cosine slope is 0 at the edges), so the wheels roll up
+  // onto a bump instead of hitting a wall. Slices are grey,
+  // like the old decoration bumps, and the bumps sign is north
+  // of the lane, clear of it.
+  (function buildBumps() {
+    var B = C.bumps;
+    for (var i = 0; i < B.count; i++) {
+      var cx = B.firstCentreX + i * B.spacing;
+      var x0 = cx - B.length / 2;
+      for (var k = 0; k < 10; k++) {
+        var sliceX = x0 + (k + 0.5) * B.length / 10;
+        var h = B.height * (0.5 - 0.5 * Math.cos(2 * Math.PI * (sliceX - x0) / B.length));
+        if (h < 0.002) continue;
+        var slice = box(B.length / 10, h, B.width, 0x777777, sliceX, h / 2, B.z);
+        slice.receiveShadow = true; // bike shadow reads on bump tops; slices do not cast (0.10 m high)
+      }
+    }
+    sign(B.firstCentreX + 4, B.z - 4, 0x777777, 'Road bumps');
+  })();
+
+  // ---- High-quality ramp station (CONFIG.ramp), final station ----
+  // Geometry must match rampHeightAt() in the rules exactly:
+  // up slope angle = atan(height / upLength) = atan(1/6) = 9.46 deg,
+  // so a rotated box of slope length sqrt(6^2 + 1^2) = 6.08 m,
+  // centred on the top surface, has its top surface exactly on
+  // the y profile the bike follows. Rotation signs: up ramp
+  // rises eastward, so rotation.z = +angle (east end up); down
+  // ramp falls eastward, so rotation.z = -angle.
+  // Visual upgrade, 2026-10-29 (no external images):
+  // * Multi-material boxes: the top face of each ramp section
+  //   uses a runtime canvas deck texture (grey concrete panels
+  //   with darker joints, tiled about 2 m), while the sides,
+  //   ends and bottom use plain concrete grey. In Three.js a
+  //   BoxGeometry material array is [px, nx, py, ny, pz, nz],
+  //   so the deck is index 2 (py, the top face).
+  // * Yellow/white high-visibility edge strips: a yellow outer
+  //   strip and a white inner strip along each edge, on all
+  //   three sections, following the slope.
+  // * Traction grooves: thin darker boxes across the central
+  //   deck every 0.5 m, tilted to the slope.
+  // * Metal side railings: posts every 1.5 m and a top rail
+  //   following the slope, 0.9 m above the deck, 0.15 m outside
+  //   the deck edge. Railings are visual only (no collision),
+  //   like the Figure 8 kerbs, and they sit outside the 3 m
+  //   lane, so a bike staying in the lane cannot reach them.
+  // Smooth transitions: the three top surfaces meet exactly at
+  // x = up end (height 1.0) and x = down start (height 1.0),
+  // and at the feet (height 0), so there is no step or gap
+  // for the bike to catch on. The remaining corner kink is
+  // in slope, not height, and the bike pitch now eases into
+  // it (see syncBikeMesh pitch smoothing) instead of snapping.
+  (function buildRamp() {
+    var R = C.ramp;
+    var ang = Math.atan2(R.height, R.upLength);
+    var slopeLen = Math.sqrt(R.upLength * R.upLength + R.height * R.height);
+    var downAng = Math.atan2(R.height, R.downLength);
+    var downLen = Math.sqrt(R.downLength * R.downLength + R.height * R.height);
+    function deckTexture(repX, repY) {
+      var cv = document.createElement('canvas');
+      cv.width = 128; cv.height = 128;
+      var c2 = cv.getContext('2d');
+      c2.fillStyle = '#7d7d7d'; c2.fillRect(0, 0, 128, 128);
+      c2.fillStyle = '#6b6b6b';
+      for (var i = 0; i < 128; i += 32) {
+        c2.fillRect(i, 0, 2, 128); c2.fillRect(0, i, 128, 2);
+      }
+      c2.fillStyle = '#8a8a8a';
+      for (var j = 0; j < 128; j += 32) c2.fillRect(j + 16, 0, 1, 128);
+      var tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(repX, repY);
+      return tex;
+    }
+    function rampBox(w, h, d, x, y, z, rotZ, repX, repY) {
+      // Concrete-textured ramp faces, 2026-10-29 realism:
+      // canvas concrete texture (roughness 0.9) instead of
+      // flat grey, on all faces except the textured deck.
+      var concrete = concreteMaterial();
+      // Deck is Standard now (was Lambert), same canvas texture,
+      // roughness 0.9, so the ramp deck lights like the rest of
+      // the track instead of sitting flat under the new lights.
+      var deck = new THREE.MeshStandardMaterial({ map: deckTexture(repX, repY), roughness: 0.9, metalness: 0 });
+      var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+        [concrete, concrete, deck, concrete, concrete, concrete]);
+      m.position.set(x, y, z);
+      if (rotZ) m.rotation.z = rotZ;
+      m.castShadow = true; m.receiveShadow = true;
+      scene.add(m);
+      return m;
+    }
+    rampBox(slopeLen, 0.2, R.width,
+      R.xStart + R.upLength / 2, R.height / 2 - 0.1 * Math.cos(ang), R.z, ang,
+      slopeLen / 2, R.width / 2);
+    rampBox(R.flatLength, R.height, R.width,
+      R.xStart + R.upLength + R.flatLength / 2, R.height / 2, R.z, 0,
+      R.flatLength / 2, R.width / 2);
+    rampBox(downLen, 0.2, R.width,
+      R.xStart + R.upLength + R.flatLength + R.downLength / 2, R.height / 2 - 0.1 * Math.cos(downAng), R.z, -downAng,
+      downLen / 2, R.width / 2);
+    // Stop lines, as before: uphill at stopLineX, downhill at
+    // downStopLineX, white, tilted to their slope.
+    var stopY = (R.stopLineX - R.xStart) / R.upLength * R.height;
+    var stopLine = box(0.3, 0.06, R.width, 0xffffff, R.stopLineX, stopY + 0.03, R.z);
+    stopLine.rotation.z = ang;
+    var downX0 = R.xStart + R.upLength + R.flatLength;
+    var downStopY = R.height - (R.downStopLineX - downX0) / R.downLength * R.height;
+    var downStopLine = box(0.3, 0.06, R.width, 0xffffff, R.downStopLineX, downStopY + 0.03, R.z);
+    downStopLine.rotation.z = -downAng;
+    stopSign(R.stopLineX, R.z + 4);
+    stopSign(R.downStopLineX, R.z + 4);
+    // Safety yellow / dark gray hazard edge strips +
+    // traction grooves + railings. 2026-10-29 realism: the
+    // strips are now exactly #E3A008 (yellow) and #333333
+    // (dark gray), matching the kerb hazard texture.
+    // Positions and sizes are unchanged: yellow at edge
+    // - 0.15, dark gray at edge - 0.30 (yellow covers
+    // 1.29-1.41, dark gray covers 1.14-1.26 on each side).
+    function edgeStrips(cx, yTop, rotZ, segLen) {
+      [1, -1].forEach(function (side) {
+        var yellowZ = R.z + side * (R.width / 2 - 0.15);
+        var grayZ = R.z + side * (R.width / 2 - 0.30);
+        var ey = box(segLen, 0.02, 0.12, 0xe3a008, cx, yTop + 0.01, yellowZ);
+        if (rotZ) ey.rotation.z = rotZ;
+        var ew = box(segLen, 0.02, 0.12, 0x333333, cx, yTop + 0.01, grayZ);
+        if (rotZ) ew.rotation.z = rotZ;
+      });
+    }
+    function grooves(x0, x1, heightAt) {
+      for (var gx = x0 + 0.5; gx < x1 - 0.1; gx += 0.5) {
+        var hy = heightAt(gx);
+        var rotZ = 0;
+        if (gx < R.xStart + R.upLength) rotZ = ang;
+        else if (gx >= downX0) rotZ = -downAng;
+        var g = box(0.05, 0.01, R.width - 0.6, 0x5a5a5a, gx, hy + 0.006, R.z);
+        if (rotZ) g.rotation.z = rotZ;
+      }
+    }
+    function railings(x0, x1, heightAt, rotZ, segLen, segCx, segY) {
+      // 2026-10-29 realism: metallic safety handrails
+      // (light steel, metalness 0.8, roughness 0.3), casting
+      // shadows. Positions, spacing (1.5 m) and heights are
+      // unchanged; only the material and shadow flags change.
+      var railMat = stdMat(0xb8bec4, 0.3, 0.8);
+      [1, -1].forEach(function (side) {
+        var rz = R.z + side * (R.width / 2 + (R.railingOffset || 0.15));
+        for (var px = x0 + 0.75; px < x1 - 0.1; px += 1.5) {
+          var post = box(0.12, R.railingHeight || 0.9, 0.12, 0xcccccc, px, heightAt(px) + (R.railingHeight || 0.9) / 2, rz);
+          post.material = railMat; post.castShadow = true;
+        }
+        var rail = box(segLen, 0.08, 0.08, 0xcccccc, segCx, segY, rz);
+        rail.material = railMat; rail.castShadow = true;
+        if (rotZ) rail.rotation.z = rotZ;
+      });
+    }
+    edgeStrips(R.xStart + R.upLength / 2, R.height / 2, ang, slopeLen);
+    edgeStrips(R.xStart + R.upLength + R.flatLength / 2, R.height, 0, R.flatLength);
+    edgeStrips(downX0 + R.downLength / 2, R.height / 2, -downAng, downLen);
+    grooves(R.xStart, downX0 + R.downLength, function (x) { return rampHeightAt(x, R.z); });
+    railings(R.xStart, R.xStart + R.upLength, function (x) { return (x - R.xStart) / R.upLength * R.height; },
+      ang, slopeLen, R.xStart + R.upLength / 2, R.height / 2 + (R.railingHeight || 0.9));
+    railings(R.xStart + R.upLength, downX0, function (x) { return R.height; },
+      0, R.flatLength, R.xStart + R.upLength + R.flatLength / 2, R.height + (R.railingHeight || 0.9));
+    railings(downX0, downX0 + R.downLength, function (x) { return R.height - (x - downX0) / R.downLength * R.height; },
+      -downAng, downLen, downX0 + R.downLength / 2, R.height / 2 + (R.railingHeight || 0.9));
+    sign(R.xStart + 7, R.z + 4, 0x1565c0, 'Ramp');
+  })();
+})(); // close buildTrack
+
+
+// ---- Perimeter fence, trees and mountains, 2026-10-29 realism ----
+// Visual only, like the kerbs and railings: no collision is
+// added, and no route, rule or physics code touches these
+// meshes. The fence encloses the paved compound (x -78 to
+// 78, z -48 to 48, 2.0 m high), well outside the route
+// (x -62 to 40, z -22 to 22), so it can never block a station.
+// Fence planes do NOT cast shadows: a chain-link plane
+// casting would throw a solid 2 m wall shadow, because the
+// shadow pass does not respect the alpha-tested holes.
+// The posts do cast, as solid steel should. Trees and
+// mountains are outside the tightened sun shadow frustum,
+// so they cast nothing either - they are background depth,
+// not shadow casters.
+(function buildEnvironment() {
+  var fenceMat = new THREE.MeshStandardMaterial({
+    map: chainLinkTexture(), transparent: true, alphaTest: 0.1,
+    side: THREE.DoubleSide, roughness: 0.5, metalness: 0.6 });
+  function fenceRun(x0, z0, x1, z1) {
+    var dx = x1 - x0, dz = z1 - z0;
+    var len = Math.sqrt(dx * dx + dz * dz);
+    var plane = new THREE.Mesh(new THREE.PlaneGeometry(len, 2.0), fenceMat);
+    plane.position.set((x0 + x1) / 2, 1.0, (z0 + z1) / 2);
+    plane.rotation.y = -Math.atan2(dz, dx);
+    scene.add(plane);
+    var steps = Math.floor(len / 10);
+    for (var i = 0; i <= steps; i++) {
+      var t = i / steps;
+      var post = new THREE.Mesh(new THREE.BoxGeometry(0.15, 2.0, 0.15),
+        galvanizedMaterial());
+      post.position.set(x0 + dx * t, 1.0, z0 + dz * t);
+      post.castShadow = true;
+      scene.add(post);
+    }
+  }
+  fenceRun(-78, -48, 78, -48);
+  fenceRun(78, -48, 78, 48);
+  fenceRun(78, 48, -78, 48);
+  fenceRun(-78, 48, -78, -48);
+  // Low-poly trees: trunk + two stacked cones, dark green,
+  // flat-shaded. Placed outside the grass (220 x 140), so
+  // they frame the compound without ever entering the route.
+  var treePositions = [
+    [-100, -85, 1.0], [-60, -90, 1.2], [-20, -88, 0.9], [20, -92, 1.1],
+    [60, -88, 1.0], [100, -85, 1.2], [-100, 85, 1.1], [-60, 90, 0.9],
+    [-20, 88, 1.2], [20, 92, 1.0], [60, 88, 1.1], [100, 85, 0.9],
+    [-125, 0, 1.2], [125, 0, 1.1]
+  ];
+  // Leaf geometry, 2026-10-29 cockpit overhaul: trees
+  // now carry three icosahedron leaf blobs (20-face,
+  // flat-shaded, two greens) instead of two cones, so
+  // the canopy reads as leaves, not as a pine cone.
+  // Positions, trunk, and scale are unchanged, and
+  // trees stay outside the grass, visual only.
+  treePositions.forEach(function (tp) {
+    var sc = tp[2];
+    var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25 * sc, 0.3 * sc, 2 * sc, 8),
+      stdMat(0x5a3a22, 0.9, 0));
+    trunk.position.set(tp[0], 1 * sc, tp[1]); scene.add(trunk);
+    var leafMats = [
+      new THREE.MeshStandardMaterial({ color: 0x2f5a1e, roughness: 0.9, flatShading: true }),
+      new THREE.MeshStandardMaterial({ color: 0x3a6b24, roughness: 0.9, flatShading: true })
+    ];
+    [[0, 3.5, 0, 1.8, 0], [0.8, 4.5, 0.3, 1.2, 1], [-0.7, 4.8, -0.2, 1.1, 0]].forEach(function (lb) {
+      var blob = new THREE.Mesh(new THREE.IcosahedronGeometry(lb[3] * sc, 0), leafMats[lb[4]]);
+      blob.position.set(tp[0] + lb[0] * sc, lb[1] * sc, tp[1] + lb[2] * sc);
+      scene.add(blob);
+    });
+  });
+  // Urban backdrop + sidewalks, 2026-10-29 cockpit
+  // overhaul: brick and glass buildings OUTSIDE the fence
+  // (fence x +/-78, z +/-48; buildings at z +/-65-70 and
+  // x +/-90, so they can never block a station), plus
+  // sidewalks, benches, and bollards on the south side
+  // (z = 6 sidewalk, bollards at z = 4.8, benches at z = 6:
+  // 3.8 m clear of the lane edge at z = 1.0, and clear of
+  // the U-turn pocket, which is on the north side).
+  // All of it is visual only: no collision, no rule reads
+  // any of these meshes, and no station coordinate moves.
+  (function buildUrban() {
+    function building(x, z, w, h, d, glass) {
+      var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({ map: glass ? glassTexture() : brickTexture(),
+          roughness: glass ? 0.2 : 0.8, metalness: glass ? 0.1 : 0 }));
+      m.position.set(x, h / 2, z); scene.add(m);
+    }
+    building(-60, -68, 20, 12, 15, false);
+    building(-20, -72, 22, 18, 15, true);
+    building(20, -68, 20, 14, 15, false);
+    building(60, -72, 22, 10, 15, true);
+    building(-60, 68, 20, 14, 15, true);
+    building(-20, 72, 22, 10, 15, false);
+    building(20, 68, 20, 16, 15, true);
+    building(60, 72, 22, 12, 15, false);
+    building(90, 0, 15, 18, 20, true);
+    building(-90, 0, 15, 14, 20, false);
+    function sidewalk(z) {
+      var m = new THREE.Mesh(new THREE.PlaneGeometry(120, 3),
+        new THREE.MeshStandardMaterial({ map: concreteTexture(), roughness: 0.9, metalness: 0 }));
+      m.rotation.x = -Math.PI / 2; m.position.set(0, 0.03, z);
+      m.receiveShadow = true; scene.add(m);
+    }
+    sidewalk(6); sidewalk(-14);
+    [-40, -20, 0, 20, 40].forEach(function (bx) {
+      var wood = stdMat(0x6b4a2a, 0.8, 0);
+      var seat = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.5), wood);
+      seat.position.set(bx, 0.48, 6); seat.castShadow = true; scene.add(seat);
+      var back = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 0.08), wood);
+      back.position.set(bx, 0.78, 6.25); back.castShadow = true; scene.add(back);
+      [-0.8, 0.8].forEach(function (lx) {
+        var leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.4),
+          galvanizedMaterial());
+        leg.position.set(bx + lx, 0.24, 6); leg.castShadow = true; scene.add(leg);
+      });
+    });
+    for (var bx2 = -50; bx2 <= 50; bx2 += 10) {
+      var bol = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.8, 10),
+        galvanizedMaterial());
+      bol.position.set(bx2, 0.4, 4.8); bol.castShadow = true; scene.add(bol);
+    }
+  })();
+  // Grandstands + barrier walls, 2026-10-29 racing style:
+  // two 3-tier stands (north z -54, south z +54, 30 m wide)
+  // outside the fence (48 m) and clear of the buildings
+  // (fronts at 60.5 m: stand back edge 58 m, 2.5 m clear),
+  // plus alternating white/red barrier walls along both
+  // outer sides at z +/-47.5 (fence plane at 48 m, wall
+  // spans 47.3-47.7 m, so no z-fighting). Visual only, no
+  // collision, castShadow false (outside the sun frustum
+  // for the most part, and large flat shadows would cost
+  // performance); the bike shadow casting is unchanged.
+  (function buildGrandstands() {
+    var crowdColours = [0xe11d48, 0x059669, 0x1e5aa8, 0xf5c518, 0xffffff, 0x111111];
+    [-1, 1].forEach(function (side) {
+      var base = new THREE.Mesh(new THREE.BoxGeometry(30, 1.0, 8),
+        stdMat(0x64748b, 0.9, 0));
+      base.position.set(-10, 0.5, side * 54); base.receiveShadow = true; scene.add(base);
+      for (var ri = 0; ri < 3; ri++) {
+        var rowY = 1.3 + ri * 0.8, rowZ = side * (51 + ri * 2.5);
+        var row = new THREE.Mesh(new THREE.BoxGeometry(30, 0.6, 2),
+          stdMat(0x475569, 0.9, 0));
+        row.position.set(-10, rowY, rowZ); row.receiveShadow = true; scene.add(row);
+        for (var cj = 0; cj < 24; cj++) {
+          var fan = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.6, 0.3),
+            stdMat(crowdColours[(ri * 24 + cj) % crowdColours.length], 0.9, 0));
+          fan.position.set(-24 + cj * 1.2, rowY + 0.6, rowZ);
+          scene.add(fan);
+        }
+      }
+      var roof = new THREE.Mesh(new THREE.BoxGeometry(32, 0.3, 10),
+        stdMat(0x1e293b, 0.7, 0.2));
+      roof.position.set(-10, 4.6, side * 54); scene.add(roof);
+      [[-24, 50], [4, 50], [-24, 58], [4, 58]].forEach(function (pp) {
+        var post = new THREE.Mesh(new THREE.BoxGeometry(0.25, 4.6, 0.25),
+          galvanizedMaterial());
+        post.position.set(pp[0], 2.3, side * pp[1]); scene.add(post);
+      });
+      // Barrier wall, this side: 10 m segments, alternating
+      // white / red, 1.0 m high, 0.4 m thick.
+      for (var sx = -78; sx < 78; sx += 10) {
+        var seg = Math.floor((sx + 78) / 10) + (side < 0 ? 1 : 0);
+        var wall = new THREE.Mesh(new THREE.BoxGeometry(10, 1.0, 0.4),
+          stdMat(seg % 2 === 0 ? 0xffffff : 0xd32f2f, 0.6, 0));
+        wall.position.set(sx + 5, 0.5, side * 47.5);
+        wall.receiveShadow = true; scene.add(wall);
+      }
+    });
+  })();
+  // Low-poly mountains in the distant skybox: grey-blue
+  // 4-sided pyramids with white caps, flat-shaded. They sit
+  // inside the 400 camera far plane and inside/outside the
+  // 300 sky dome as needed: the dome writes no depth, so a
+  // mountain beyond it still draws over the sky correctly.
+  var mountains = [
+    [-220, -180, 70, 55], [180, -200, 60, 45], [260, 80, 80, 60],
+    [-260, 100, 70, 50], [0, -260, 90, 70]
+  ];
+  mountains.forEach(function (mp) {
+    var r = mp[2], hgt = mp[3];
+    var rockMat = new THREE.MeshStandardMaterial({ color: 0x6b7a8a, roughness: 1.0, flatShading: true });
+    var peak = new THREE.Mesh(new THREE.ConeGeometry(r, hgt, 4), rockMat);
+    peak.position.set(mp[0], hgt / 2, mp[1]); peak.rotation.y = Math.PI / 4;
+    scene.add(peak);
+    var cap = new THREE.Mesh(new THREE.ConeGeometry(r * 0.28, hgt * 0.28, 4),
+      new THREE.MeshStandardMaterial({ color: 0xe8eef2, roughness: 1.0, flatShading: true }));
+    cap.position.set(mp[0], hgt - hgt * 0.14, mp[1]); cap.rotation.y = Math.PI / 4;
+    scene.add(cap);
+  });
+})();
+
+
+/* =====================================================================
+   SECTION 3 - VEHICLE (bike model + arcade physics)
+   The bike is a group pointing +X locally; the group rotation.y is
+   set to -heading each frame (see header note). A child "lean" group
+   tilts the bike + rider into corners. Wheels spin with speed.
+   No physics library: speed, heading and position are integrated
+   by hand in the game loop. Steering only changes heading while
+   the bike is moving, and speed never goes below 0 (no reverse).
+   ===================================================================== */
+var VEH = CONFIG.vehicles[CONFIG.activeVehicle];
+var bike = new THREE.Group();
+var leanGroup = new THREE.Group();
+var riderGroup = new THREE.Group(); // rider body + head: hidden in Rider POV
+var steerGroup = new THREE.Group(); // handlebar + mirrors: turns with steering
+var wheelSpin = [];
+// Left indicator for the U-turn station: toggled by L / IND,
+// blinked in syncBikeMesh, read by checkUturn at arc entry.
+var leftIndicator = false;
+var indicatorMesh = null;
+// Cockpit mirrors + dashboard, 2026-10-29 overhaul.
+// Mirrors: one shared 128x128 render target, rendered from
+// a rear-facing camera at the mirror, in POV only, every
+// 2nd frame, with shadows off (see updateMirrors). Both
+// mirror faces share that one texture: two separate
+// targets would mean three full scene renders per frame.
+// Dashboard: a canvas texture, redrawn only when the
+// rounded km/h or the gear changes (see updateDashboard).
+var mirrorTarget = null;
+var mirrorCamera = null;
+var mirrorFaceMeshes = [];
+var mirrorMapAssigned = false;
+var mirrorFrame = 0;
+var dashCanvas = null;
+var dashCtx = null;
+var dashTexture = null;
+var dashLastKmh = -1;
+var dashLastGear = '';
+var dashHideMeshes = []; // dashboard face + windscreen, hidden during mirror render
+// Ride panel accumulators: distance (m) and trial time (s),
+// counted only while playing, reset by resetGame().
+var rideDistance = 0;
+var rideTime = 0;
+leanGroup.add(riderGroup);
+bike.add(leanGroup);
+scene.add(bike);
+
+(function buildVehicle() {
+  // Simple box bike, commits 1-9. The high-fidelity bike
+  // (extruded fairings, lathe tank, capsule rider, Traffic
+  // Rider cockpit) is restored in commit 10 only. This simple
+  // version still sets every variable later code expects:
+  // wheelSpin, indicatorMesh, and (left null on purpose)
+  // mirrorTarget / dashCanvas, which updateMirrors and
+  // updateDashboard already return early for.
+  function part(geo, colour, x, y, z, parent) {
+    var m = new THREE.Mesh(geo, mat(colour));
+    m.position.set(x, y, z); (parent || leanGroup).add(m); return m;
+  }
+  part(new THREE.BoxGeometry(1.10, 0.20, 0.22), 0x2a2f36, 0, 0.50, 0);
+  part(new THREE.BoxGeometry(0.60, 0.25, 0.33), 0xd32f2f, 0.18, 0.80, 0);
+  part(new THREE.BoxGeometry(0.40, 0.06, 0.24), 0x111111, -0.25, 0.80, 0);
+  part(new THREE.BoxGeometry(0.30, 0.04, 0.18), 0xd32f2f, 0.67, 0.68, 0);
+  part(new THREE.BoxGeometry(0.30, 0.04, 0.22), 0xd32f2f, -0.67, 0.68, 0);
+  [0.67, -0.67].forEach(function (wx) {
+    var spin = new THREE.Group(); spin.position.set(wx, 0.33, 0);
+    var tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.12, 20), mat(0x111111));
+    tyre.rotation.x = Math.PI / 2; spin.add(tyre);
+    var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.05, 0.13), mat(0xd9dee6));
+    spin.add(spoke);
+    var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.13, 12), mat(0xd9dee6));
+    hub.rotation.x = Math.PI / 2; spin.add(hub);
+    leanGroup.add(spin); wheelSpin.push(spin);
+  });
+  steerGroup.position.set(0.60, 0.86, 0); leanGroup.add(steerGroup);
+  var bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.75), mat(0xd9dee6));
+  steerGroup.add(bar);
+  [0.30, -0.30].forEach(function (z) {
+    var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.16, 12), mat(0x555555));
+    grip.rotation.x = Math.PI / 2; grip.position.set(0, 0, z); steerGroup.add(grip);
+  });
+  function rpart(geo, colour, x, y, z) {
+    var m = new THREE.Mesh(geo, mat(colour)); m.position.set(x, y, z); riderGroup.add(m); return m;
+  }
+  rpart(new THREE.BoxGeometry(0.30, 0.18, 0.30), 0x1e5aa8, -0.30, 0.88, 0);
+  rpart(new THREE.BoxGeometry(0.20, 0.50, 0.34), 0x1e5aa8, 0, 1.08, 0);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), mat(0x111111));
+  head.position.set(0.20, 1.32, 0); riderGroup.add(head);
+  indicatorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08),
+    new THREE.MeshBasicMaterial({ color: 0xffa500 }));
+  indicatorMesh.position.set(0.60, 0.95, -0.35); indicatorMesh.visible = false;
+  leanGroup.add(indicatorMesh);
+})();
+// Bike casts shadows: every mesh in the bike group (frame,
+// wheels, rider) casts, so the bike reads as a solid object
+// under the sun instead of floating on the ground. This is
+// visual only; bikeState and the physics below are untouched.
+bike.traverse(function (o) { if (o.isMesh) o.castShadow = true; });
+
+// Vehicle state (metres, metres/second, radians).
+// bikeState.speed is the speed magnitude shown in the HUD and used
+// by the rules (STOP, plank foot-down). vx/vz are the true velocity
+// vector: forward speed lives along the heading, sideways speed
+// across it. The physics in animate() damps the sideways part
+// strongly every frame, so the bike tracks the front wheel.
+var bikeState = { x: 0, z: 0, heading: 0, speed: 0, steer: 0, y: 0, vx: 0, vz: 0 };
+// Last frame time, set by the game loop; rules that count seconds
+// (STOP, plank foot-down, red light) use this, not a fixed 1/60,
+// so they stay correct on 120 Hz screens as well as 60 Hz ones.
+var lastDt = 1 / 60;
+function forwardVec() {
+  return { x: Math.cos(bikeState.heading), z: Math.sin(bikeState.heading) };
+}
+function rightVec() {
+  var f = forwardVec();
+  return { x: -f.z, z: f.x }; // 90 deg perpendicular in the XZ plane
+}
+// Wheel-track points in world coords, from CONFIG wheel offsets.
+function getWheelPositions() {
+  var f = forwardVec(), r = rightVec();
+  return VEH.wheelOffsets.map(function (off) {
+    return { x: bikeState.x + f.x * off.x + r.x * off.z,
+             z: bikeState.z + f.z * off.x + r.z * off.z };
+  });
+}
+// Bump visual state, used only by syncBikeMesh (no rule reads it).
+// bikePitchSmooth eases the ramp pitch instead of snapping it at
+// the slope corners (see below). bumpBounceY/Vel is the suspension
+// overshoot on top of the wheel-following height: the base motion
+// is the wheel-average bump height, and the spring (k = 80, c = 10,
+// underdamped) is driven by the base acceleration, clamped so the
+// bounce stays minor (at most 5 cm down, 8 cm up) even at speed.
+var bikePitchSmooth = 0;
+var bumpBounceY = 0, bumpBounceVel = 0;
+var bumpPrevWheelAvg = 0, bumpPrevWheelAvgVel = 0;
+// Dashboard drawing, 2026-10-29 cockpit: digital speed
+// (km/h, big white) + gear + a simple analog arc needle
+// (0 at left, 25 km/h at right, the bike's top speed).
+// Redrawn only when the rounded km/h or the gear changes,
+// so it costs almost nothing per frame.
+function updateDashboard() {
+  if (!dashCtx || !dashTexture) return;
+  var kmh = Math.round(bikeState.speed * 3.6);
+  var gear = gearLabel();
+  if (kmh === dashLastKmh && gear === dashLastGear) return;
+  dashLastKmh = kmh; dashLastGear = gear;
+  var c = dashCtx;
+  c.fillStyle = '#0b1220'; c.fillRect(0, 0, 256, 256);
+  // Outer ring, then tick marks for 0/5/10/15/20/25 km/h
+  // along the top semicircle (west -> north -> east).
+  c.strokeStyle = '#94a3b8'; c.lineWidth = 6;
+  c.beginPath(); c.arc(128, 128, 118, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = '#ffffff'; c.lineWidth = 3;
+  for (var ti = 0; ti <= 25; ti += 5) {
+    var ta = Math.PI - (ti / 25) * Math.PI;
+    c.beginPath();
+    c.moveTo(128 + Math.cos(ta) * 100, 128 - Math.sin(ta) * 100);
+    c.lineTo(128 + Math.cos(ta) * 110, 128 - Math.sin(ta) * 110);
+    c.stroke();
+  }
+  var frac = Math.max(0, Math.min(1, kmh / 25));
+  var na = Math.PI - frac * Math.PI;
+  // Illuminated needle + hub, same mapping as before
+  // (west at 0 km/h, east at 25 km/h, via north).
+  c.strokeStyle = '#f5c518'; c.lineWidth = 5;
+  c.beginPath(); c.moveTo(128, 128);
+  c.lineTo(128 + Math.cos(na) * 92, 128 - Math.sin(na) * 92); c.stroke();
+  c.fillStyle = '#f5c518'; c.beginPath(); c.arc(128, 128, 8, 0, Math.PI * 2); c.fill();
+  // Digital speed readout, centre, and gear indicator below it.
+  c.fillStyle = '#ffffff'; c.font = 'bold 52px sans-serif'; c.textAlign = 'center';
+  c.fillText(String(kmh), 128, 180);
+  c.font = 'bold 15px sans-serif'; c.fillStyle = '#94a3b8';
+  c.fillText('km/h', 128, 200);
+  c.fillStyle = '#f5c518'; c.font = 'bold 30px sans-serif';
+  c.fillText('GEAR ' + gear, 128, 232);
+  dashTexture.needsUpdate = true;
+}
+
+// Mirror render, 2026-10-29 cockpit: real-time, but kept
+// cheap enough for a phone. One shared 128x128 target for
+// both mirrors, POV only, every 2nd frame, shadows off
+// (shadow maps would otherwise re-render for the mirror
+// camera too). Mirror faces + dashboard face + windscreen
+// are hidden during the render, so the texture cannot
+// contain its own mirror image. The mirror camera sits
+// at the first mirror face and looks backward (-forward),
+// so the image is the road behind the bike, as a mirror
+// should show. This uses only Three.js r128 core
+// (WebGLRenderTarget + PerspectiveCamera): the Reflector
+// helper lives in the three.js examples, not in the
+// cdnjs core file this game is limited to, so it is not
+// used here. If the mirror looks slow on a low-end phone,
+// the texture stays at 128 px and the frame skip stays.
+function updateMirrors() {
+  if (cameraMode !== 'pov' || !mirrorTarget || !mirrorCamera) return;
+  if (mirrorFaceMeshes.length === 0) return;
+  mirrorFrame++;
+  if (mirrorFrame % 2 !== 0) return;
+  var mp = new THREE.Vector3();
+  mirrorFaceMeshes[0].getWorldPosition(mp);
+  mirrorCamera.position.copy(mp);
+  var f = forwardVec();
+  mirrorCamera.lookAt(mp.x - f.x * 5, mp.y + 0.1, mp.z - f.z * 5);
+  var hidden = [];
+  mirrorFaceMeshes.forEach(function (m) { hidden.push(m); m.visible = false; });
+  dashHideMeshes.forEach(function (m) { hidden.push(m); m.visible = false; });
+  var shadowWas = renderer.shadowMap.enabled;
+  renderer.shadowMap.enabled = false;
+  renderer.setRenderTarget(mirrorTarget);
+  renderer.render(scene, mirrorCamera);
+  renderer.setRenderTarget(null);
+  renderer.shadowMap.enabled = shadowWas;
+  hidden.forEach(function (m) { m.visible = true; });
+  if (!mirrorMapAssigned) {
+    mirrorFaceMeshes.forEach(function (m) {
+      m.material.map = mirrorTarget.texture;
+      m.material.needsUpdate = true;
+    });
+    mirrorMapAssigned = true;
+  }
+}
+
+function syncBikeMesh() {
+  // Wheel-following bump height: front and rear wheel bump
+  // heights (cosine, see bumpHeightAt), averaged. This is the
+  // correct chassis height on a short bump: with a 1.34 m
+  // wheelbase and a 1 m bump, both wheels are never on one
+  // bump at once, so the average peaks at about 5 cm (one
+  // wheel at 0.10 m, the other at 0), not 10 cm. The bike
+  // centre height would give 10 cm and would float the wheels
+  // 10 cm above the ground when the centre is over a bump top
+  // with both wheels off the bump. Outside the bumps area
+  // both wheel heights are 0, so this term is exactly 0 and
+  // plank/ramp behaviour is unchanged.
+  var wheelBump = bumpWheelHeights();
+  var wheelAvg = (wheelBump[0] + wheelBump[1]) / 2;
+  var wheelPitch = Math.atan((wheelBump[0] - wheelBump[1]) / (VEH.wheelbase || 1.34));
+  // Suspension spring, driven by wheel-average acceleration
+  // (finite difference, clamped to +/-20 m/s^2 so a fast bump
+  // cannot launch the bike). Updated here, once per frame,
+  // because syncBikeMesh runs once per frame in animate.
+  var bumpVel = lastDt > 0 ? (wheelAvg - bumpPrevWheelAvg) / lastDt : 0;
+  var bumpAccel = lastDt > 0 ? (bumpVel - bumpPrevWheelAvgVel) / lastDt : 0;
+  if (bumpAccel > 20) bumpAccel = 20;
+  if (bumpAccel < -20) bumpAccel = -20;
+  bumpBounceVel += (-80 * bumpBounceY - 10 * bumpBounceVel - bumpAccel) * lastDt;
+  bumpBounceY += bumpBounceVel * lastDt;
+  if (bumpBounceY > 0.08) bumpBounceY = 0.08;
+  if (bumpBounceY < -0.05) bumpBounceY = -0.05;
+  if (bumpBounceVel > 1) bumpBounceVel = 1;
+  if (bumpBounceVel < -1) bumpBounceVel = -1;
+  bumpPrevWheelAvg = wheelAvg; bumpPrevWheelAvgVel = bumpVel;
+  bike.position.set(bikeState.x, bikeState.y + wheelAvg + bumpBounceY, bikeState.z);
+  bike.rotation.y = -bikeState.heading;
+  // Lean into the corner, scaled by speed so it is calm at low speed.
+  var lean = bikeState.steer * Math.min(1, bikeState.speed / 4) * 0.22;
+  leanGroup.rotation.x = lean;
+  // Pitch: ramp pitch eased (2026-10-29, smooth collider
+  // transition), plus bump pitch from the wheels. Ramp pitch
+  // angle = atan(height/length) = 9.46 deg. Easing at dt*10
+  // takes about 0.1 s, so the pitch no longer snaps at the
+  // ramp foot / flat-top corners, where the slope changes
+  // instantly but the height does not. Bump pitch is direct
+  // (no easing needed): wheel heights are already smooth
+  // (cosine, slope 0 at the edges), so it cannot snap.
+  // This is a local Z rotation (forward is local X), so it
+  // works whatever the heading is, and the handlebar,
+  // wheels and rider all pitch with the bike. On flat ground
+  // both terms are exactly 0, as before.
+  var rampSlopeNow = rampSlopeAt(bikeState.x, bikeState.z);
+  var targetRampPitch = rampSlopeNow !== 0 ? Math.atan(rampSlopeNow) : 0;
+  bikePitchSmooth += (targetRampPitch - bikePitchSmooth) * Math.min(1, lastDt * 10);
+  leanGroup.rotation.z = bikePitchSmooth + wheelPitch;
+  // Handlebar turns with steering: steering right (steer +1) turns
+  // the bar towards the bike's right (+Z local), which is a
+  // negative Y rotation for a +X-forward bike (see header note).
+  // Full lock = 45 deg (0.785 rad) in 2026-10-29, up from 20 deg:
+  // the bar now visibly shows the tight turn the new 1.8 m
+  // radius gives, instead of looking barely turned while the
+  // bike turns sharply.
+  // Handlebar wobble (bumps): a fast, small sinusoidal offset
+  // on top of the steering rotation, decaying with the wobble
+  // timer (see checkBumps). About 0.15 rad (8.6 deg) at full
+  // wobble, plus the steering perturbation already in
+  // bikeState.steer, so the bar visibly shakes without the
+  // bike losing control.
+  var wobble = 0;
+  if (S && S.bumpWobbleTime > 0) {
+    wobble = Math.sin(elapsedTime * 25) * (S.bumpWobbleTime / 1.0) * 0.15;
+  }
+  steerGroup.rotation.y = -bikeState.steer * 0.785 + wobble;
+  // Left indicator blink: 2 Hz (on half the time), only
+  // while the indicator is on. S may be empty before the
+  // first resetGame, but leftIndicator is a plain global.
+  if (indicatorMesh) {
+    indicatorMesh.visible = leftIndicator && (Math.floor(elapsedTime * 2) % 2 === 0);
+  }
+  updateDashboard();
+  wheelSpin.forEach(function (w) {
+    w.rotation.z -= bikeState.speed * lastDt / (VEH.wheelRadius || 0.33);
+  });
+}
+
+/* =====================================================================
+   SECTION 4 - INPUT
+   Keyboard: arrows / WASD, Space = brake, C = camera toggle.
+   Mobile: on-screen buttons, one flag per button, so multi-touch
+   (e.g. holding GO while steering) works - each button tracks its
+   own pointer. Buttons are only shown on touch devices (body.touch).
+   ===================================================================== */
+var input = { left: false, right: false, gas: false, brake: false,
+              lookLeft: false, lookRight: false };
+var KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+               ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake',
+               Space: 'brake' };
+window.addEventListener('keydown', function (e) {
+  if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
+  if (e.code === 'KeyQ') input.lookLeft = true;
+  if (e.code === 'KeyE') input.lookRight = true;
+  if (e.code === 'KeyC') toggleCamera();
+  if (e.code === 'KeyL' && gameState === 'playing' && !e.repeat) toggleLeftIndicator();
+  if (e.code === 'Enter' && gameState === 'menu') startGame();
+  // Manual gear shifting, edge-triggered: one gear per press, not
+  // one per frame while the key is held (e.repeat is ignored), so
+  // holding Shift does not run through all gears. preventDefault
+  // keeps the page from scrolling (PageUp/PageDown) and keeps
+  // browser focus in the game while playing. Shift keys are only
+  // active while playing, so PageUp/PageDown can still scroll the
+  // start/result cards when not playing.
+  //  Shift up: Shift, PageUp, or R (while playing).
+  //  Shift down: Control, PageDown, Z, or F.
+  // R is deliberately dual-purpose, and it does NOT conflict:
+  // while playing it shifts up; on the failed/finished screens
+  // the handler below still makes it Retry, as before.
+  if (!e.repeat && gameState === 'playing') {
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'PageUp' ||
+        e.code === 'KeyR') {
+      shiftUp(); e.preventDefault();
+    } else if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'PageDown' ||
+               (e.code === 'KeyZ' && !e.ctrlKey && !e.metaKey) ||
+               (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey)) {
+      shiftDown(); e.preventDefault();
+    }
+  }
+  if (e.code === 'KeyR' && (gameState === 'failed' || gameState === 'finished')) resetGame();
+});
+window.addEventListener('keyup', function (e) {
+  if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = false; e.preventDefault(); }
+  if (e.code === 'KeyQ') input.lookLeft = false;
+  if (e.code === 'KeyE') input.lookRight = false;
+});
+if ('ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0) {
+  document.body.classList.add('touch');
+}
+document.querySelectorAll('.mbtn').forEach(function (btn) {
+  var name = btn.getAttribute('data-input');
+  if (!name) return; // CAM button has no drive input; wired below.
+  function on(e) { e.preventDefault(); input[name] = true; btn.classList.add('pressed'); }
+  function off(e) { e.preventDefault(); input[name] = false; btn.classList.remove('pressed'); }
+  btn.addEventListener('pointerdown', on);
+  btn.addEventListener('pointerup', off);
+  btn.addEventListener('pointercancel', off);
+  btn.addEventListener('pointerleave', off);
+  btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+});
+// Gear buttons (mobile, touch only via #mobileControls): NOT in the
+// generic .mbtn binder above, because they have no data-input - they
+// shift, they do not hold a drive input. pointerdown is the instant
+// touch path (it fires on touchstart, before click), so a tap shifts
+// immediately, and because each button tracks its own pointer, you
+// can tap GEAR+ while still holding GO and steering with another
+// finger - the tap never cancels or steals those inputs. pointerup
+// only clears the pressed highlight; the gear change itself is
+// edge-triggered in shiftUp()/shiftDown(), so holding the button
+// down does not run through gears.
+[['gearUpBtn', shiftUp], ['gearDownBtn', shiftDown]].forEach(function (pair) {
+  var btn = document.getElementById(pair[0]);
+  if (!btn) return;
+  function on(e) { e.preventDefault(); pair[1](); btn.classList.add('pressed'); }
+  function off(e) { e.preventDefault(); btn.classList.remove('pressed'); }
+  btn.addEventListener('pointerdown', on);
+  btn.addEventListener('pointerup', off);
+  btn.addEventListener('pointercancel', off);
+  btn.addEventListener('pointerleave', off);
+  btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+});
+// Look buttons (POV mode, all devices): same multi-touch pattern,
+// but they set lookLeft / lookRight instead of a drive input.
+document.querySelectorAll('.lookbtn').forEach(function (btn) {
+  var side = btn.getAttribute('data-look');
+  function on(e) { e.preventDefault();
+    input[side === 'left' ? 'lookLeft' : 'lookRight'] = true; btn.classList.add('pressed'); }
+  function off(e) { e.preventDefault();
+    input[side === 'left' ? 'lookLeft' : 'lookRight'] = false; btn.classList.remove('pressed'); }
+  btn.addEventListener('pointerdown', on);
+  btn.addEventListener('pointerup', off);
+  btn.addEventListener('pointercancel', off);
+  btn.addEventListener('pointerleave', off);
+  btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+});
+
+/* =====================================================================
+   SECTION 5 - RULES + SCORING
+   Game state: 'menu' | 'playing' | 'failed' | 'finished'.
+   Score starts at the implemented total (70) and only falls:
+   first island touch -5, skipped STOP -5, U-turn border touch
+   -10, U-turn without left signal -5, red light -5,
+   bad bump crossing -5, skipped bumps -5, missed ramp stops
+   -5 each, ramp rollback -5. Instant
+   fails end the trial immediately with a reason. The breakdown on
+   the result screen is computed from these flags, so it always
+   matches the live score shown in the top bar.
+   ===================================================================== */
+var gameState = 'menu';
+var S = {}; // trial progress + penalties, reset by resetGame()
+// Camera modes, cycled by C / the camera button(s): chase -> top -> pov.
+var CAMERA_MODES = ['chase', 'top', 'pov'];
+var CAMERA_LABELS = { chase: 'Camera: Chase', top: 'Camera: Top-down', pov: 'Camera: Rider POV' };
+var cameraMode = 'chase'; // 2026-10-29 racing style: trial now starts in Chase (C / CAM still cycles chase -> top -> POV); the POV cockpit from the cockpit overhaul is still available in POV mode
+var headLook = 0; // smoothed head yaw in Rider POV, radians, max +/-60 deg
+var elapsedTime = 0; // seconds, for the POV vertical shake
+var toastTimer = null;
+
+// ---- Manual gears: 0 = Neutral, 1 / 2 / 3 = forward gears. No reverse.
+// The trial starts in Gear 1 (not Neutral), so GO works immediately
+// on the first run; shift down once from Gear 1 to reach Neutral.
+// resetGame() always returns to Gear 1, so a retry never starts
+// stranded in Neutral. Shifting is edge-triggered (one gear per
+// key press / button tap, not one per frame while held), and only
+// while playing - on the result screen R still means Retry (see the
+// keydown handler). updateHUD() shows the current gear, so a shift
+// is visible in the top bar the same frame it happens.
+var currentGear = 1;
+function gearInfo() {
+  if (VEH.gears && VEH.gears[currentGear]) return VEH.gears[currentGear];
+  return { label: (currentGear === 0 ? 'N' : String(currentGear)),
+           maxSpeedKmh: VEH.maxSpeedKmh, accel: VEH.accel,
+           coastDecel: VEH.coastDecel, steerResponse: 10 };
+}
+function gearLabel() { return gearInfo().label; }
+function shiftUp() {
+  if (gameState !== 'playing') return;
+  if (currentGear < 3) { currentGear++; updateHUD(); }
+}
+function shiftDown() {
+  if (gameState !== 'playing') return;
+  if (currentGear > 0) { currentGear--; updateHUD(); }
+}
+
+function resetGame() {
+  S = {
+    fig8Done: false, fig8Phase: 'right', fig8LeftDone: false, fig8RightDone: false, fig8LoopStarted: true,
+    fig8Checkpoint: 0, fig8OutsideTime: 0, fig8OutsideWarned: false,
+    fig8PrevPhi: Math.atan2(CONFIG.start.z - CONFIG.fig8.right.z,
+                             CONFIG.start.x - CONFIG.fig8.right.x),
+    fig8Cum: 0,
+    islandHits: 0, insideIsland: false,
+    stopDone: false, stopTime: 0, stopSkipped: false,
+    plankStarted: false, plankDone: false, plankSlowTime: 0,
+    rampStarted: false, rampDone: false, rampStopTime: 0, rampStopDone: false,
+    rampStopSkipped: false, rampStopX: 0, rampRollbackPenalty: false,
+    rampDownStopTime: 0, rampDownStopDone: false, rampDownStopSkipped: false,
+    lightStarted: false, lightState: 'red', lightTimer: 0, lightPenalty: false,
+    bumpsCrossed: {}, bumpsCrossedCount: 0, bumpsDoneToast: false,
+    bumpsHighSpeedPenalty: false, bumpsSkipped: false,
+    uturnInArc: false, uturnDone: false, uturnSkipped: false,
+    uturnOutsideTime: 0, uturnOutsideWarned: false,
+    uturnBorderPenalty: false, uturnIndicatorPenalty: false,
+    uturnPhiPrev: 0, uturnPhiCum: 0,
+    bumpWobbleTime: 0, bumpPrevFrontH: 0, bumpPrevRearH: 0, bumpPrevX: 0, bumpPrevCentreH: 0,
+    finished: false, failReason: ''
+  };
+  // Ride panel always restarts at zero, like the score.
+  rideDistance = 0; rideTime = 0;
+  // Left indicator always starts OFF, so a retry never
+  // inherits a signal from the previous trial.
+  leftIndicator = false;
+  var badgeEl = document.getElementById('indicatorText');
+  if (badgeEl) { badgeEl.textContent = 'Signal: OFF'; badgeEl.className = 'indicator'; }
+  var indBtnEl = document.getElementById('indicatorBtn');
+  if (indBtnEl) indBtnEl.classList.remove('pressed');
+  bikeState.x = CONFIG.start.x; bikeState.z = CONFIG.start.z;
+  bikeState.heading = CONFIG.start.heading; bikeState.speed = 0; bikeState.steer = 0;
+  bikeState.y = 0; bikeState.vx = 0; bikeState.vz = 0;
+  currentGear = 1; // every trial / retry starts in Gear 1, never in Neutral
+  bikePitchSmooth = 0; bumpBounceY = 0; bumpBounceVel = 0;
+  bumpPrevWheelAvg = 0; bumpPrevWheelAvgVel = 0;
+  syncBikeMesh();
+  // Snap the camera behind the bike so the first frame is not a swoop.
+  var f = forwardVec();
+  camera.position.set(bikeState.x - f.x * 5.0, bikeState.y + 2.4, bikeState.z - f.z * 5.0);
+  camera.lookAt(bikeState.x, bikeState.y + 0.9, bikeState.z);
+  // The smoothed chase look target snaps with it, so the first
+  // chase frame does not lerp in from the old position.
+  chaseLookTarget.set(bikeState.x + f.x * 2.5, bikeState.y + 0.9, bikeState.z + f.z * 2.5);
+  hideResult(); setStation('Figure 8',
+    'Enter from the right side (south). Follow the top-bar hint for each next step.');
+  updateHUD(); updateTrafficLight();
+}
+function currentScore() {
+  var fig8 = CONFIG.points.figure8 - (S.islandHits >= 1 ? CONFIG.penalties.islandFirstTouch : 0);
+  var plank = CONFIG.points.plank; // 10 unless the plank itself fails the trial
+  // Ramp: 10 points, -5 for each missed stop (uphill,
+  // downhill), -5 for rollback after the uphill stop,
+  // floored at 0, so missing both stops cannot take the
+  // ramp below 0 or change the game total / pass mark.
+  var ramp = Math.max(0, CONFIG.points.ramp
+    - (S.rampStopSkipped ? CONFIG.penalties.rampStopSkipped : 0)
+    - (S.rampDownStopSkipped ? CONFIG.penalties.rampDownStopSkipped : 0)
+    - (S.rampRollbackPenalty ? CONFIG.penalties.rampRollback : 0));
+  var signal = CONFIG.points.signal - (S.lightPenalty ? CONFIG.penalties.redLight : 0);
+  var bumps = Math.max(0, CONFIG.points.bumps
+    - (S.bumpsHighSpeedPenalty ? CONFIG.penalties.bumpsHighSpeed : 0)
+    - (S.bumpsSkipped ? CONFIG.penalties.bumpsSkipped : 0));
+  // U-turn: 10 points, 0 if skipped at the finish, otherwise
+  // -10 for a border touch and -5 for entering without the
+  // left signal, floored at 0 (so both together cannot take
+  // the station below 0 or change the game total / pass mark
+  // beyond the station's own 10 points).
+  var uturn = S.uturnSkipped ? 0 : Math.max(0, CONFIG.points.uturn
+    - (S.uturnBorderPenalty ? CONFIG.penalties.uturnBorder : 0)
+    - (S.uturnIndicatorPenalty ? CONFIG.penalties.uturnIndicator : 0));
+  var stop = S.stopSkipped ? CONFIG.penalties.stopSkipped : 0;
+  return { fig8: fig8, plank: plank, uturn: uturn, signal: signal, bumps: bumps, ramp: ramp,
+           stopPenalty: stop, total: fig8 + plank + uturn + signal + bumps + ramp - stop };
+}
+function breakdownHTML() {
+  var sc = currentScore();
+  function row(label, pts) { return '<tr><td>' + label + '</td><td>' + pts + '</td></tr>'; }
+  var html = row('Figure 8 (of ' + CONFIG.points.figure8 + ')', sc.fig8);
+  html += row('Narrow plank (of ' + CONFIG.points.plank + ')', sc.plank);
+  html += row('U-Turn (of ' + CONFIG.points.uturn + ')', sc.uturn);
+  html += row('Traffic light (of ' + CONFIG.points.signal + ')', sc.signal);
+  html += row('Road bumps (of ' + CONFIG.points.bumps + ')', sc.bumps);
+  html += row('Ramp stops, up + down (of ' + CONFIG.points.ramp + ')', sc.ramp);
+  if (sc.stopPenalty) html += row('STOP line skipped', '-' + sc.stopPenalty);
+  html += row('<b>Total (of ' + CONFIG.implementedTotal + ')</b>', '<b>' + sc.total + '</b>');
+  html += row('Pass mark (70%)', CONFIG.passMark);
+  return html;
+}
+function showToast(msg, ok) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.className = ok ? 'toast ok show' : 'toast show';
+  // Keep the id-based styling working: the class list above replaces
+  // it, so re-add the id selector effect via the .show rule (CSS uses #toast.show).
+  t.id = 'toast';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ''; }, 3200);
+}
+function setStation(name, hint) {
+  document.getElementById('stationName').textContent = name;
+  document.getElementById('stationHint').textContent = hint;
+}
+function updateHUD() {
+  var sc = currentScore();
+  document.getElementById('scoreText').textContent =
+    'Score: ' + sc.total + ' / ' + CONFIG.implementedTotal;
+  document.getElementById('speedText').textContent =
+    Math.round(bikeState.speed * 3.6) + ' km/h';
+  document.getElementById('gearText').textContent =
+    'Gear: [' + gearLabel() + ']';
+  // Ride panel, 2026-10-29 cockpit overhaul: accumulate only
+  // while playing (updateHUD runs every frame, even in the
+  // menu, so the gameState guard matters). lastDt is set at
+  // the top of animate() each frame.
+  if (gameState === 'playing') {
+    rideDistance += Math.abs(bikeState.speed) * lastDt;
+    rideTime += lastDt;
+  }
+  var rs = document.getElementById('rideSpeed');
+  if (rs) rs.textContent = Math.round(bikeState.speed * 3.6);
+  var rd = document.getElementById('rideDistance');
+  if (rd) rd.textContent = (rideDistance / 1000).toFixed(2) + ' km';
+  var rt = document.getElementById('rideTime');
+  if (rt) rt.textContent = Math.floor(rideTime) + ' s';
+  var tt = document.getElementById('timerText');
+  if (tt) tt.textContent = 'Time: ' + Math.floor(rideTime) + ' s';
+  // Circular speedometer, 2026-10-29: arc length is the speed
+  // fraction of the 25 km/h top speed; number/gear match the
+  // top bar exactly (same bikeState.speed, same gearLabel()).
+  var sa = document.getElementById('speedoArc');
+  var frac = Math.min(1, bikeState.speed / (25 / 3.6));
+  if (sa) sa.setAttribute('stroke-dashoffset', (314.16 * (1 - frac)).toFixed(1));
+  var ss = document.getElementById('speedoSpeed');
+  if (ss) ss.textContent = Math.round(bikeState.speed * 3.6);
+  var sg = document.getElementById('speedoGear');
+  if (sg) sg.textContent = 'Gear ' + gearLabel();
+}
+function showResult(title, reason, passed) {
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultReason').textContent = reason;
+  var sc = currentScore();
+  document.getElementById('resultScore').textContent =
+    sc.total + ' / ' + CONFIG.implementedTotal;
+  document.getElementById('resultScore').className = 'big ' + (passed ? 'pass' : 'fail');
+  document.getElementById('breakdown').innerHTML = breakdownHTML();
+  document.getElementById('resultVerdict').textContent = passed
+    ? 'PASS - you scored at least 70% (' + CONFIG.passMark + ' points). Well ridden!'
+    : 'FAIL - you needed ' + CONFIG.passMark + ' points to pass. Tap Retry and try again.';
+  document.getElementById('resultScreen').classList.remove('hidden');
+}
+function hideResult() {
+  document.getElementById('resultScreen').classList.add('hidden');
+}
+function failGame(reason) {
+  if (gameState !== 'playing') return;
+  gameState = 'failed'; S.failReason = reason;
+  showToast(reason, false);
+  showResult('Instant fail', reason, false);
+}
+function finishGame() {
+  if (gameState !== 'playing') return;
+  gameState = 'finished'; S.finished = true;
+  var sc = currentScore();
+  var passed = sc.total >= CONFIG.passMark;
+  showResult(passed ? 'Trial complete - PASS' : 'Trial complete - FAIL',
+    'You finished all stations. See your breakdown below.', passed);
+}
+function startGame() {
+  document.getElementById('startScreen').classList.add('hidden');
+  resetGame();
+  gameState = 'playing';
+}
+// Left indicator toggle (L key / IND button, playing only).
+// Updates the top-bar badge and the mobile button highlight;
+// the 3D blink is handled in syncBikeMesh.
+function toggleLeftIndicator() {
+  if (gameState !== 'playing') return;
+  leftIndicator = !leftIndicator;
+  var badge = document.getElementById('indicatorText');
+  if (badge) {
+    badge.textContent = leftIndicator ? 'Signal: LEFT' : 'Signal: OFF';
+    badge.className = leftIndicator ? 'indicator on' : 'indicator';
+  }
+  var btn = document.getElementById('indicatorBtn');
+  if (btn) btn.classList.toggle('pressed', leftIndicator);
+}
+function toggleCamera() {
+  var idx = CAMERA_MODES.indexOf(cameraMode);
+  cameraMode = CAMERA_MODES[(idx + 1) % CAMERA_MODES.length];
+  document.getElementById('cameraBtn').textContent = CAMERA_LABELS[cameraMode];
+  // body.pov drives the mini-map + look buttons (CSS), and the
+  // rider is hidden in POV (see the camera section in animate).
+  document.body.classList.toggle('pov', cameraMode === 'pov');
+  // Rider POV uses a wider field of view; the other modes use 60 deg.
+  camera.fov = (cameraMode === 'pov') ? 75 : 60;
+  camera.updateProjectionMatrix();
+}
+document.getElementById('cameraBtn').addEventListener('click', toggleCamera);
+document.getElementById('mobileCameraBtn').addEventListener('click', toggleCamera);
+var indicatorBtnEl = document.getElementById('indicatorBtn');
+if (indicatorBtnEl) indicatorBtnEl.addEventListener('click', toggleLeftIndicator);
+// ---- Arrows toggle: ON by default, so the game looks as before
+// outside Figure 8. OFF hides arrowGroup (all directional arrows
+// and yellow route dashes outside Figure 8) and nothing else:
+// STOP lines, plank edges, traffic light, bumps, ramp,
+// gates, signs and the mini-map are essential markings, not
+// "non-essential route arrows", so they stay visible. Figure 8
+// has nothing in arrowGroup, so it stays clean in both states.
+// resetGame() deliberately does NOT touch arrowsOn, so the
+// player's choice survives a retry/restart.
+var arrowsOn = true;
+function toggleArrows() {
+  arrowsOn = !arrowsOn;
+  arrowGroup.visible = arrowsOn;
+  var label = 'Arrows: ' + (arrowsOn ? 'ON' : 'OFF');
+  document.getElementById('arrowsBtn').textContent = label;
+  var startBtn = document.getElementById('arrowsBtnStart');
+  if (startBtn) startBtn.textContent = label;
+}
+document.getElementById('arrowsBtn').addEventListener('click', toggleArrows);
+document.getElementById('arrowsBtnStart').addEventListener('click', toggleArrows);
+document.getElementById('restartBtn').addEventListener('click', function () {
+  if (gameState === 'menu') { startGame(); } else { resetGame(); gameState = 'playing'; }
+});
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('retryBtn').addEventListener('click', function () {
+  resetGame(); gameState = 'playing';
+});
+function updateTrafficLight() {
+  var lamps = window.__lamps;
+  if (!lamps) return;
+  lamps.red.material.color.setHex(S.lightState === 'red' ? 0xff2222 : 0x330000);
+  lamps.amber.material.color.setHex(0x332200);
+  lamps.green.material.color.setHex(S.lightState === 'green' ? 0x22ff44 : 0x002200);
+}
+function dist(x1, z1, x2, z2) {
+  var dx = x1 - x2, dz = z1 - z2;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
+/* ---- Station checks: called every frame while playing ---- */
+// Angle helper: wrap a difference to [-pi, pi].
+function wrapAngle(d) {
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+function checkFigure8() {
+  var F = CONFIG.fig8;
+  if (S.fig8Done) return;
+  var wheels = getWheelPositions();
+
+  // Island touch: any wheel centre within island radius + tolerance.
+  // Counted once per entry: leaving the island (all wheels clear)
+  // re-arms it, so a second distinct touch is a fail. UNCHANGED
+  // by the playability fix - the island is a physical kerb.
+  var touching = wheels.some(function (w) {
+    return dist(w.x, w.z, F.left.x, F.left.z) < F.islandRadius + F.islandTolerance ||
+           dist(w.x, w.z, F.right.x, F.right.z) < F.islandRadius + F.islandTolerance;
+  });
+  if (touching && !S.insideIsland) {
+    S.insideIsland = true; S.islandHits++;
+    if (S.islandHits === 1) {
+      showToast('Island touched: -' + CONFIG.penalties.islandFirstTouch + ' points', false);
+    } else {
+      failGame('Instant fail: island touched more than once.');
+      return;
+    }
+  }
+  if (!touching) S.insideIsland = false;
+
+  // Outer boundary, PLAYABILITY FIX 2026-10-28.
+  // Why the old rule was unfair, in one line: it failed on the
+  // FIRST frame a WHEEL was outside the union, and a wheel is
+  // 0.67 m ahead of / behind the bike centre along the heading,
+  // so a wheel crosses the line a fraction of a second before
+  // the bike itself does, and a turn at the entry or at a corner
+  // pushes a wheel outside even while the bike is still in the
+  // lane. With binary keyboard steering (full lock or nothing,
+  // smoothed) a rider cannot correct a 1 cm overshoot in one
+  // frame. The new rule therefore has three parts, all verified
+  // in simulation (see the delivery note):
+  //  (a) it checks the BIKE CENTRE, not the wheels - the bike is
+  //      narrow, its wheels are on its centreline, so the centre
+  //      is its lane position;
+  //  (b) it only runs AFTER the first checkpoint (north of
+  //      the right island) and BEFORE the last checkpoint, so the
+  //      entry manoeuvre west of the loop and the exit manoeuvre
+  //      east of it are not outer-line fails at all;
+  //  (c) it only fails after outerGraceSeconds (2.0 s) CONTINUOUSLY
+  //      outside the union, inside the footprint. A corner
+  //      overshoot that is corrected within 2 s is a warning
+  //      toast, not a fail. Leaving the loop area for 2 s still
+  //      fails, exactly as before, just not instantly.
+  // Geometry is UNCHANGED: the white union line is still drawn
+  // at outerRadius 3.0 m, the islands are still 1.5 m radius,
+  // the lane is still 1.5 m wide. Only the fail trigger moved.
+  if (S.fig8Checkpoint >= 1 && S.fig8Checkpoint < F.checkpoints.length) {
+    var inFootprint = bikeState.x >= F.left.x - F.outerRadius &&
+                      bikeState.x <= F.right.x + F.outerRadius &&
+                      Math.abs(bikeState.z) <= F.outerRadius + 0.5;
+    var outsideBoth = dist(bikeState.x, bikeState.z, F.left.x, F.left.z) > F.outerRadius + F.outerTolerance &&
+                      dist(bikeState.x, bikeState.z, F.right.x, F.right.z) > F.outerRadius + F.outerTolerance;
+    if (inFootprint && outsideBoth) {
+      // Grace timer PAUSES when stopped (speed < 0.25 m/s):
+      // a stationary bike cannot correct, and the screenshot
+      // case was exactly this - bike stopped on the outer line
+      // at the east (back) turn, in Gear 3, at 0 km/h, with the
+      // timer still running. Pausing it lets the rider shift,
+      // think, then move forward and correct without failing
+      // while standing still. The timer resumes as soon as the
+      // bike moves again while still outside.
+      S.fig8OutsideTime += lastDt;
+      if (!S.fig8OutsideWarned) {
+        S.fig8OutsideWarned = true;
+        showToast('Outside the outer line - steer back inside, fast!', false);
+      }
+      if (S.fig8OutsideTime >= F.outerGraceSeconds) {
+        failGame('Instant fail: tyre crossed the Figure 8 outer line.');
+        return;
+      }
+    } else {
+      S.fig8OutsideTime = 0; S.fig8OutsideWarned = false;
+    }
+  } else {
+    S.fig8OutsideTime = 0; S.fig8OutsideWarned = false;
+  }
+
+  // Wrong Entry Direction, 2026-10-29: entering from the LEFT
+  // (north) side, or riding in reverse, is an instant fail
+  // (-100 pts in the spec's 100-point wording; in this game's
+  // 70-point system an instant fail already overrides any
+  // pass, so the score is left as other instant fails leave
+  // it - the fail itself is the penalty). Two checks, both
+  // gated on the right loop NOT being complete, so the
+  // legitimate north-side travel after the right loop (left
+  // island north/west) cannot trip them:
+  // (a) north-west of the LEFT island (x < -39.5, z < -1.5,
+  //     within the outer circle) before the right loop is
+  //     done = the old left-first entry. The legitimate route
+  //     before checkpoint 3 stays south (z > 0), on the neck
+  //     (x = -38, not < -39.5), or on the right island (far
+  //     from the left centre), so it cannot trip this.
+  // (b) east of the loop heading west before Figure 8 is done
+  //     = entering / riding in reverse.
+  if (false && !S.fig8Done && S.fig8Checkpoint < 3 &&
+      bikeState.x < -39.5 && bikeState.z < -1.5 &&
+      dist(bikeState.x, bikeState.z, F.left.x, F.left.z) < F.outerRadius + 0.2) {
+    failGame('Instant fail: Wrong Entry Direction (-100 pts). Figure 8 must be entered from the right side, right island first.');
+    return;
+  }
+  if (!S.fig8Done && bikeState.x > F.right.x + F.outerRadius + 0.5 &&
+      Math.abs(bikeState.z) <= F.outerRadius && Math.cos(bikeState.heading) < 0) {
+    failGame('Instant fail: Wrong Entry Direction (-100 pts). Figure 8 must be entered from the right side, right island first.');
+    return;
+  }
+
+  // Right-loop start, 2026-10-29 (bug caught in simulation):
+  // the wrong-way angle tracker must NOT run during the
+  // south-side entry transit. Riding east along the south
+  // side makes phi around the right island DECREASE (from
+  // ~2.9 rad west-south to 1.57 rad at the south point),
+  // which looks exactly like a counter-clockwise loop and
+  // would falsely fail a correct entry before the loop even
+  // starts. The loop only starts when the bike crosses the
+  // middle neck NORTHBOUND (x within 1.2 m of -38, z < 0,
+  // heading north) - that crossing is the west side of the
+  // right island, heading north, i.e. the first segment of
+  // the clockwise loop. Until then, prevPhi is just updated
+  // and cum stays 0. Reaching checkpoint 1 (right north)
+  // without this crossing is itself a wrong entry (the bike
+  // must have looped south/east/north around the right
+  // island instead), and is failed in the checkpoint block.
+  if (!S.fig8LoopStarted && S.fig8Checkpoint < 3 &&
+      Math.abs(bikeState.x + 38) < 1.2 && bikeState.z < 0 &&
+      Math.sin(bikeState.heading) < -0.5) {
+    S.fig8LoopStarted = true; S.fig8Cum = 0;
+    S.fig8PrevPhi = Math.atan2(bikeState.z - F.right.z, bikeState.x - F.right.x);
+  }
+  // Wrong-way angle, now only around the CURRENT island, and
+  // reset when the right loop completes (checkpoint 3).
+  // Right phase = checkpoints 0-2: clockwise = increasing
+  // phi, so a negative cumulative angle past the threshold =
+  // wrong way (the rider went south around the right island
+  // first). Left phase = checkpoints 3-5: counter-clockwise
+  // = decreasing phi, so a positive cumulative angle past
+  // the threshold = wrong way (the rider went south around
+  // the left island first). This still fails a wrong-way loop
+  // even though loop completion itself is checkpoint-based,
+  // and the messages name it as the spec does: Wrong Entry
+  // Direction (-100 pts).
+  if (S.fig8Checkpoint < 3) {
+    var centreR = F.right;
+    var dR = dist(bikeState.x, bikeState.z, centreR.x, centreR.z);
+    var phiR = Math.atan2(bikeState.z - centreR.z, bikeState.x - centreR.x);
+    if (S.fig8LoopStarted && dR < F.outerRadius + 0.4) {
+      S.fig8Cum += wrapAngle(phiR - S.fig8PrevPhi);
+      if (S.fig8Cum < -F.wrongWayRad) {
+        failGame('Instant fail: Wrong Entry Direction (-100 pts). Right island must be looped clockwise.');
+        return;
+      }
+    }
+    S.fig8PrevPhi = phiR;
+  } else if (S.fig8Checkpoint < F.checkpoints.length) {
+    var centreL = F.left;
+    var dL = dist(bikeState.x, bikeState.z, centreL.x, centreL.z);
+    var phiL = Math.atan2(bikeState.z - centreL.z, bikeState.x - centreL.x);
+    if (dL < F.outerRadius + 0.4) {
+      S.fig8Cum += wrapAngle(phiL - S.fig8PrevPhi);
+      if (S.fig8Cum > F.wrongWayRad) {
+        failGame('Instant fail: Wrong Entry Direction (-100 pts). Left island must be looped counter-clockwise.');
+        return;
+      }
+    }
+    S.fig8PrevPhi = phiL;
+  }
+
+  // Checkpoint advancement, in order, radius 1.4 m around the
+  // checkpoint point, on the BIKE CENTRE. A checkpoint reached
+  // out of order does NOT advance anything - the rider must
+  // still go back and pass the next checkpoint in order, so
+  // skipping a loop cannot complete Figure 8. Checkpoint 3
+  // (right south) completes the right loop and switches the
+  // angle tracking to the left island. Checkpoint 6 (left
+  // south) completes the left loop and opens the exit on the
+  // right (south) lane.
+  if (S.fig8Checkpoint < F.checkpoints.length) {
+    var ck = F.checkpoints[S.fig8Checkpoint];
+    if (dist(bikeState.x, bikeState.z, ck.x, ck.z) < F.checkpointRadius) {
+      if (S.fig8Checkpoint === 0 && !S.fig8LoopStarted) {
+        failGame('Instant fail: Wrong Entry Direction (-100 pts). Right island must be entered via the middle, north through the neck, not around the south and east sides.');
+        return;
+      }
+      S.fig8Checkpoint++;
+      if (S.fig8Checkpoint === 3) {
+        S.fig8RightDone = true; S.fig8Phase = 'left';
+        S.fig8Cum = 0;
+        S.fig8PrevPhi = Math.atan2(bikeState.z - F.left.z, bikeState.x - F.left.x);
+        showToast('Right loop complete - now the left island, opposite way.', true);
+      } else if (S.fig8Checkpoint === F.checkpoints.length) {
+        S.fig8LeftDone = true; S.fig8Phase = 'exit';
+        showToast('Figure 8 loops complete - exit east on the right lane.', true);
+      } else {
+        showToast('Figure 8: next step - see the top-bar hint.', true);
+      }
+    }
+  }
+
+  // Exit: after the final checkpoint (left south), ride east
+  // out of the footprint on the RIGHT (south) lane (z >= -0.5,
+  // so the centre axis still counts, but a north-side exit
+  // does not). Outer checking is already off (checkpoint =
+  // all done, see above), so the exit S-curve east of the
+  // loop cannot fail on the outer line.
+  if (S.fig8LeftDone && bikeState.x > F.right.x + F.outerRadius + 1.0 &&
+      bikeState.z >= -0.5 && Math.cos(bikeState.heading) > 0) {
+    S.fig8Done = true;
+    showToast('Figure 8 complete!', true);
+  }
+}
+
+function checkStopAndPlank() {
+  var ST = CONFIG.stop, P = CONFIG.plank;
+  // STOP line: only counts before the plank, in the approach lane.
+  if (S.fig8Done && !S.plankStarted && !S.stopSkipped) {
+    if (bikeState.x >= ST.zoneMinX && bikeState.x <= ST.zoneMaxX &&
+        Math.abs(bikeState.z) < ST.halfWidth) {
+      if (bikeState.speed < ST.stopSpeed) {
+        S.stopTime += lastDt;
+        if (S.stopTime >= ST.stopTimeNeeded && !S.stopDone) {
+          S.stopDone = true;
+          showToast('STOP line OK - good stop.', true);
+        }
+      } else {
+        S.stopTime = 0;
+      }
+    }
+    // Crossing the line without a qualifying stop = -5, once.
+    if (bikeState.x > ST.lineX + 0.1 && !S.stopDone) {
+      S.stopSkipped = true;
+      showToast('STOP line skipped: -' + CONFIG.penalties.stopSkipped + ' points', false);
+    }
+  }
+  // Plank: started when the bike centre enters it.
+  if (bikeState.x >= P.xStart && bikeState.x <= P.xEnd) S.plankStarted = true;
+  if (S.plankStarted && !S.plankDone) {
+    var wheels = getWheelPositions();
+    var offPlank = wheels.some(function (w) {
+      return w.x >= P.xStart - 0.1 && w.x <= P.xEnd + 0.1 &&
+             Math.abs(w.z) > P.width / 2 + P.edgeTolerance;
+    });
+    if (offPlank) { failGame('Instant fail: wheel left the narrow plank.'); return; }
+    // Foot down = coming (almost) to a stop on the plank.
+    if (bikeState.speed < P.slowSpeed) {
+      S.plankSlowTime += lastDt;
+      if (S.plankSlowTime >= P.slowTimeLimit) {
+        failGame('Instant fail: foot down on the narrow plank (stopped on it).');
+        return;
+      }
+    } else {
+      S.plankSlowTime = 0;
+    }
+  }
+  if (S.plankStarted && bikeState.x > P.xEnd + 0.2 && !S.plankDone) {
+    S.plankDone = true;
+    showToast('Plank complete!', true);
+  }
+}
+
+// Road bump height profile, shared by the visuals (buildBumps
+// slices, route dashes), the bike y/pitch (syncBikeMesh) and
+// the rules (checkBumps). Cosine hump: 0 at both edges,
+// height at the centre, slope 0 at the edges, so there is no
+// vertical step to catch a wheel on. Bumps do not overlap
+// (spacing 2.0 m, length 1 m), so at most one is active.
+function bumpHeightAt(x, z) {
+  var B = CONFIG.bumps;
+  if (Math.abs(z - B.z) >= B.width / 2) return 0;
+  for (var i = 0; i < B.count; i++) {
+    var cx = B.firstCentreX + i * B.spacing;
+    if (x >= cx - B.length / 2 && x < cx + B.length / 2) {
+      return B.height * (0.5 - 0.5 * Math.cos(2 * Math.PI * (x - (cx - B.length / 2)) / B.length));
+    }
+  }
+  return 0;
+}
+function bumpIndexAt(x, z) {
+  var B = CONFIG.bumps;
+  if (Math.abs(z - B.z) >= B.width / 2) return -1;
+  for (var i = 0; i < B.count; i++) {
+    var cx = B.firstCentreX + i * B.spacing;
+    if (x >= cx - B.length / 2 && x < cx + B.length / 2) return i;
+  }
+  return -1;
+}
+// Front and rear wheel bump heights, in wheelOffsets order
+// (front first, rear second). Used for the visual chassis
+// height/pitch, for bump drag, and for entry/exit detection.
+function bumpWheelHeights() {
+  var wheels = getWheelPositions();
+  return [bumpHeightAt(wheels[0].x, wheels[0].z),
+          bumpHeightAt(wheels[1].x, wheels[1].z)];
+}
+
+// Ramp height profile, shared by bike y, pitch and gravity.
+// Returns the top-surface height at (x, z), or 0 outside the ramp.
+// Up: linear 0 -> height over upLength. Flat: height. Down:
+// linear height -> 0 over downLength. Outside x or z range: 0.
+function rampHeightAt(x, z) {
+  var R = CONFIG.ramp;
+  if (Math.abs(z - R.z) >= R.width / 2) return 0;
+  if (x < R.xStart) return 0;
+  if (x < R.xStart + R.upLength) return (x - R.xStart) / R.upLength * R.height;
+  if (x < R.xStart + R.upLength + R.flatLength) return R.height;
+  if (x < R.xStart + R.upLength + R.flatLength + R.downLength) {
+    return R.height - (x - R.xStart - R.upLength - R.flatLength) / R.downLength * R.height;
+  }
+  return 0;
+}
+// Ramp slope dh/dx at (x, z): +height/upLength on the up slope,
+// 0 on the flat top, -height/downLength on the down slope, 0
+// outside the ramp. Used only for gravity in animate().
+function rampSlopeAt(x, z) {
+  var R = CONFIG.ramp;
+  if (Math.abs(z - R.z) >= R.width / 2) return 0;
+  if (x >= R.xStart && x < R.xStart + R.upLength) return R.height / R.upLength;
+  if (x >= R.xStart + R.upLength + R.flatLength &&
+      x < R.xStart + R.upLength + R.flatLength + R.downLength) return -R.height / R.downLength;
+  return 0;
+}
+
+// U-Turn rules, 2026-10-29 re-insertion. Gated on the plank:
+// the pocket is station 4, after the plank, before the light.
+// Phi is the position angle around the centre, with east = 0,
+// north = +pi/2, west = pi (canvas/world: north is -Z, so
+// phi = atan2(-(z - centreZ), x - centreX)). The correct
+// left arc goes phi 0 (entry, east) -> pi/2 (north) -> pi
+// (exit, west), i.e. phi INCREASES. A phi decrease past
+// -0.6 rad is the wrong way (around the south side).
+function checkUturn() {
+  // Not yet built in this commit - driving straight east past x=10 counts as done,
+  // so later stations (when added) are not blocked.
+  if (!S.plankDone || S.uturnDone) return;
+  if (bikeState.x > 10) S.uturnDone = true;
+}
+
+function checkRamp() {
+  // Not yet scored in this commit - ramp is scenery, no stops required.
+  if (bikeState.x > 32) S.rampStarted = true;
+  if (bikeState.x > 47.2) S.rampDone = true;
+}
+
+function checkTrafficLight() {
+  // Not yet scored in this commit - light stays green.
+  if (!S.uturnDone) return;
+  if (!S.lightStarted) { S.lightStarted = true; S.lightState = 'green'; updateTrafficLight(); }
+}
+
+function checkBumps() {
+  // Not yet scored in this commit - physics only, no penalty.
+  var wheels = bumpWheelHeights();
+  var frontH = wheels[0], rearH = wheels[1];
+  var centreH = bumpHeightAt(bikeState.x, bikeState.z);
+  var B = CONFIG.bumps;
+  if ((S.bumpPrevFrontH > 0 && frontH === 0) || (S.bumpPrevRearH > 0 && rearH === 0)) {
+    var fct = B.exitSpeedFactor;
+    bikeState.vx *= fct; bikeState.vz *= fct; bikeState.speed *= fct;
+  }
+  S.bumpPrevFrontH = frontH; S.bumpPrevRearH = rearH;
+  S.bumpPrevX = bikeState.x; S.bumpPrevCentreH = centreH;
+  if (S.uturnDone && bikeState.x >= 28) S.bumpsCrossedCount = 5;
+}
+
+function checkFinish() {
+  // U-turn bypass at the finish: reaching the gate without
+  // the U-turn counts the U-turn as skipped (0 points),
+  // before the ramp bypass below also counts the ramp.
+  // Without this, a skipped U-turn would still score 10.
+  if (!S.uturnDone && !S.uturnSkipped &&
+      bikeState.x > CONFIG.finish.x &&
+      Math.abs(bikeState.z - CONFIG.finish.z) < 2.5 &&
+      Math.cos(bikeState.heading) > 0) {
+    S.uturnSkipped = true;
+    showToast('U-turn skipped: U-turn points lost', false);
+  }
+  if (!S.rampDone) {
+    // Ramp bypass at the finish: bike reaches the finish gate
+    // without ever completing the ramp (it went around it).
+    // Count both ramp stops as skipped and set rampDone, so
+    // the trial still finishes with the ramp points lost,
+    // instead of soft-locking at the gate.
+    if (bikeState.x > CONFIG.finish.x &&
+        Math.abs(bikeState.z - CONFIG.finish.z) < 2.5 &&
+        Math.cos(bikeState.heading) > 0) {
+      if (!S.rampStopDone && !S.rampStopSkipped) {
+        S.rampStopSkipped = true;
+        showToast('Ramp skipped: -' + CONFIG.penalties.rampStopSkipped + ' points', false);
+      }
+      if (!S.rampDownStopDone && !S.rampDownStopSkipped) {
+        S.rampDownStopSkipped = true;
+        showToast('Downhill ramp stop skipped: -' + CONFIG.penalties.rampDownStopSkipped + ' points', false);
+      }
+      S.rampDone = true;
+    } else {
+      return;
+    }
+  }
+  // Bumps bypass at the finish: fewer than 5 crossed = -5 once.
+  // This is checked here, not at the ramp, because the bike
+  // can still go back west and cross the bumps after the ramp
+  // and before the finish - only the finish count is final.
+  if (S.bumpsCrossedCount < CONFIG.bumps.count && !S.bumpsSkipped) {
+    S.bumpsSkipped = true;
+    showToast('Road bumps skipped: -' + CONFIG.penalties.bumpsSkipped + ' points', false);
+  }
+  // Finish: past the finish gate, on the eastbound lane, heading east.
+  if (bikeState.x > CONFIG.finish.x &&
+      Math.abs(bikeState.z - CONFIG.finish.z) < 2.5 &&
+      Math.cos(bikeState.heading) > 0) {
+    finishGame();
+  }
+}
+
+function updateStationBar() {
+  if (!S.fig8Done) {
+    var fig8Hints = [
+      'Enter from the right side: turn south at entry, go east along the south side, then north through the middle to the north side of the right island.',
+      'North side of the right island, heading east, then turn south at the east side.',
+      'East side of the right island, heading south, then turn west along the south side.',
+      'South side of the right island, heading west, then north through the middle to the north side of the left island.',
+      'North side of the left island, heading west, then turn south at the west side.',
+      'West side of the left island, heading south, then turn east along the south side and exit east on the right lane.'
+    ];
+    setStation('Figure 8',
+      S.fig8LeftDone
+        ? 'Figure 8 loops complete - exit east on the right lane to the STOP line.'
+        : fig8Hints[S.fig8Checkpoint] || fig8Hints[0]);
+  } else if (!S.plankDone && bikeState.x < CONFIG.plank.xStart) {
+    setStation('STOP line',
+      'Stop fully for 0.5 s at the white STOP line before the plank.');
+  } else if (!S.plankDone) {
+    setStation('Narrow plank',
+      'Keep both wheels on the 50 cm plank. Do not stop on it.');
+  } else if (!S.uturnDone) {
+    setStation('U-Turn',
+      leftIndicator
+        ? 'Left signal ON - turn left off the main lane at x = 10, hold LEFT through the north semicircle, exit at x = 2.'
+        : 'Press L (or IND) for the left signal, then turn left off the main lane at x = 10 and hold LEFT through the semicircle.');
+  } else if (bikeState.x < CONFIG.bumps.firstCentreX) {
+    setStation('Traffic light',
+      S.lightState === 'red'
+        ? 'Red light: stop before the white line at x = ' + CONFIG.signal.stopLineX + ' and wait for green.'
+        : (S.lightStarted
+          ? 'Green light: ride east through the bumps.'
+          : 'Ride east to the traffic light at x = ' + CONFIG.signal.stopLineX + '.'));
+  } else if (bikeState.x < CONFIG.ramp.xStart) {
+    setStation('Road bumps',
+      S.bumpsCrossedCount >= CONFIG.bumps.count
+        ? 'Bumps complete - ride east to the ramp.'
+        : 'Cross the 5 bumps in Gear 1, under 12 km/h, straight on. Faster or steeper will wobble you.');
+  } else if (!S.rampDone) {
+    var R = CONFIG.ramp, upEnd = R.xStart + R.upLength,
+        downStart = upEnd + R.flatLength;
+    var rampHint;
+    if (!S.rampStopDone && !S.rampStopSkipped) {
+      rampHint = !S.rampStarted
+        ? 'Ride east to the ramp, then up the incline.'
+        : 'Stop fully for 0.5 s on the uphill - hold brake on the slope.';
+    } else if (S.rampStopDone && bikeState.x <= upEnd) {
+      rampHint = 'Ramp stop OK - restart smoothly in Gear 1, do not roll back more than 0.5 m.';
+    } else if (!S.rampDownStopDone && !S.rampDownStopSkipped) {
+      rampHint = bikeState.x < downStart
+        ? 'Uphill stop ' + (S.rampStopDone ? 'OK' : 'missed') + ' - over the flat top, then stop on the downhill with brake.'
+        : 'Stop fully for 0.5 s on the downhill - HOLD BRAKE, do not just coast.';
+    } else {
+      rampHint = 'Ramp stops done - proceed down to ground level, then east through the finish gate.';
+    }
+    setStation('Ramp stops', rampHint);
+  } else {
+    setStation('Finish',
+      'Ramp complete - ride east through the finish gate at x = ' + CONFIG.finish.x + '.');
+  }
+}
+
+/* ---- Mini-map (Rider POV only): top-down sketch of the ground ---- */
+// World -> canvas: uniform scale over x in [-65, 55], z in [-30, 30].
+// The range was widened from width 110 to width 120 so the
+// finish gate at x = 50 (shifted east with the U-turn) is
+// inside the map, not on its edge.
+function drawMinimap() {
+  var cv = document.getElementById('minimapCanvas');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var W = cv.width, H = cv.height;
+  var scale = Math.min(W / 120, H / 60);
+  var ox = (W - 120 * scale) / 2, oy = (H - 60 * scale) / 2;
+  function mx(x) { return ox + (x + 65) * scale; }
+  function mz(z) { return oy + (z + 30) * scale; }
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#222'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#888'; ctx.fillRect(mx(-62), mz(-22), 94 * scale, 44 * scale);
+  // Figure 8 in the mini-map: the SAME single union outline
+  // as the 3D track, drawn as ONE path (not two separate
+  // arcs), filled with the surface colour, then stroked
+  // white once. Canvas angles match world phi (canvas y
+  // is down = south), so the two major arcs are drawn
+  // anticlockwise (decreasing angle): left arc top ->
+  // north -> west -> south -> bottom, right arc bottom ->
+  // south -> east -> north -> top. Islands are filled.
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+  (function drawMinimapUnion() {
+    var inter = Math.acos((CONFIG.fig8.centreDistance / 2) / CONFIG.fig8.outerRadius);
+    var arcLen = Math.PI * 2 - 2 * inter;
+    ctx.beginPath();
+    ctx.arc(mx(CONFIG.fig8.left.x), mz(CONFIG.fig8.left.z),
+      CONFIG.fig8.outerRadius * scale, -inter, -inter - arcLen, true);
+    ctx.arc(mx(CONFIG.fig8.right.x), mz(CONFIG.fig8.right.z),
+      CONFIG.fig8.outerRadius * scale, Math.PI - inter, Math.PI - inter - arcLen, true);
+    ctx.closePath();
+    ctx.fillStyle = '#707070'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.stroke();
+  })();
+  [CONFIG.fig8.left, CONFIG.fig8.right].forEach(function (c) {
+    ctx.fillStyle = '#e67e22';
+    ctx.beginPath(); ctx.arc(mx(c.x), mz(c.z), CONFIG.fig8.islandRadius * scale, 0, Math.PI * 2); ctx.fill();
+  });
+  // U-turn arc (white centreline, north semicircle):
+  // canvas angles: 0 = east, -pi/2 = north (canvas y is
+  // down = south), so east -> north -> west is 0 to -pi
+  // anticlockwise. Centre (6, -4), radius 4 m.
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(mx(CONFIG.uturn.centreX), mz(CONFIG.uturn.centreZ),
+    CONFIG.uturn.centreRadius * scale, 0, -Math.PI, true);
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  // Traffic light stop line (white, at x = 16, z = 0).
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(mx(CONFIG.signal.stopLineX) - 1, mz(-1.2), 2, 2.4 * scale);
+  // Road bumps (grey bars, 1 m x 2 m each, centres 20 to 28).
+  ctx.fillStyle = '#777777';
+  for (var bi = 0; bi < CONFIG.bumps.count; bi++) {
+    var bcx = CONFIG.bumps.firstCentreX + bi * CONFIG.bumps.spacing;
+    ctx.fillRect(mx(bcx - 0.5), mz(CONFIG.bumps.z - 1), 1 * scale, 2 * scale);
+  }
+  // Ramp (grey bar on the main lane, z = 0) + stop lines.
+  ctx.fillStyle = '#777777';
+  ctx.fillRect(mx(CONFIG.ramp.xStart), mz(CONFIG.ramp.z - CONFIG.ramp.width / 2),
+    (CONFIG.ramp.upLength + CONFIG.ramp.flatLength + CONFIG.ramp.downLength) * scale,
+    CONFIG.ramp.width * scale);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(mx(CONFIG.ramp.stopLineX) - 1, mz(CONFIG.ramp.z - CONFIG.ramp.width / 2),
+    2, CONFIG.ramp.width * scale);
+  ctx.fillRect(mx(CONFIG.ramp.downStopLineX) - 1, mz(CONFIG.ramp.z - CONFIG.ramp.width / 2),
+    2, CONFIG.ramp.width * scale);
+  // Plank (brown bar) + finish gate (red, at x = 50).
+  ctx.fillStyle = '#c98a2d';
+  ctx.fillRect(mx(-10), mz(-0.25), 10 * scale, 0.5 * scale);
+  ctx.fillStyle = '#d32f2f';
+  ctx.fillRect(mx(CONFIG.finish.x) - 1, mz(-1.2), 2, 2.4 * scale);
+  // Bike dot + heading tick. Top bar (score/speed) stays visible in POV.
+  var bx = mx(bikeState.x), bz = mz(bikeState.z);
+  var f = forwardVec();
+  ctx.strokeStyle = '#ff2222'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(bx, bz); ctx.lineTo(bx + f.x * 9, bz + f.z * 9); ctx.stroke();
+  ctx.fillStyle = '#ff2222';
+  ctx.beginPath(); ctx.arc(bx, bz, 4, 0, Math.PI * 2); ctx.fill();
+}
+
+/* =====================================================================
+   SECTION 6 - GAME LOOP + CAMERA + RESIZE
+   Fixed-step feel via a clamped dt (max 50 ms) so a slow frame cannot
+   teleport the bike through a line. Cameras: chase = behind + above,
+   smoothed; top = directly above, following the bike; pov = rider
+   head (see below), FOV 75, with lean, look-into-turn and shake.
+   ===================================================================== */
+var clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  var dt = Math.min(clock.getDelta(), 0.05);
+  lastDt = dt;
+  elapsedTime += dt;
+
+  if (gameState === 'playing') {
+    // --- Grounded physics: velocity-vector model, not a scalar ---
+    // Honest note on the old model: it had NO sideways velocity at
+    // all - position always moved exactly along the heading - so
+    // the "ice skater" feel was not literal sideways sliding. It
+    // was glide + lag: a very gentle coast (0.7 m/s^2, so 10 km/h
+    // took ~4 s / ~5.5 m to die away) plus steering that took
+    // ~0.1 s to reach full lock, so the bike kept travelling on
+    // its old line while you were already turning. This model
+    // fixes both causes directly, and makes lateral grip explicit
+    // and measurable (see the damping step below).
+    var gear = gearInfo();
+    var maxSpeed = gear.maxSpeedKmh / 3.6;
+    // Steering response is gear-dependent: Gear 1 is sharp and
+    // immediate (30/s, 90% lock in ~0.07 s, so the heading
+    // follows the input with almost no lag in the tight
+    // 1.5 m Figure 8 lane), Gear 2 14/s, Gear 3 / Neutral 10/s.
+    // Smoothing is kept, just much faster in Gear 1, so the
+    // bike does not snap, but also does not lag behind the
+    // input - the heading direction vector rotates as soon
+    // as the player steers, with no heavy momentum lag.
+    var steerTarget = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    bikeState.steer += (steerTarget - bikeState.steer) *
+      Math.min(1, dt * (gear.steerResponse || 10));
+    // Bump wobble: decay the timer, and perturb the steering
+    // itself (not just the visual bar, which follows steer in
+    // syncBikeMesh). Amplitude 0.15, about 4 Hz, so the bike
+    // weaves slightly for about 1 s after a bad bump crossing,
+    // without losing control - the sinusoid averages to zero.
+    if (S.bumpWobbleTime > 0) {
+      S.bumpWobbleTime = Math.max(0, S.bumpWobbleTime - dt);
+      bikeState.steer += Math.sin(elapsedTime * 25) * (S.bumpWobbleTime / 1.0) * 0.15;
+      if (bikeState.steer > 1) bikeState.steer = 1;
+      if (bikeState.steer < -1) bikeState.steer = -1;
+    }
+    // Forward speed before this frame's turn, from the velocity
+    // vector (not from a scalar that is assumed to be forward).
+    var f0 = forwardVec();
+    var forwardBefore = bikeState.vx * f0.x + bikeState.vz * f0.z;
+    // Steering ONLY with forward velocity - no spin-in-place.
+    // Heading changes only if forward speed > steerMinSpeed
+    // (0.2 m/s from 2026-10-29, was 0.5), and yaw rate = steer
+    // * speed / effectiveRadius, so at speed 0 the yaw rate is
+    // exactly 0 even if the player holds left/right. Effective
+    // radius is FLOORED at 1.8 m (Math.max), never below it:
+    // at full lock the path radius is exactly effectiveRadius;
+    // at partial steering it is larger (radius / |steer|).
+    // Dynamic radius, 2026-10-29: radius = 1.8 + 0.05 x speed,
+    // so at 8 km/h (2.22 m/s) radius 1.91 m, at Gear 1 max
+    // 2.78 m/s radius 1.94 m, at 25 km/h radius 2.15 m - all
+    // inside 1.8-2.2 m, tied to the steering input (radius /
+    // |steer|) with only a tiny speed term, so there is no
+    // velocity-lag understeer pushing the front tyre over
+    // the outer line. The old 2.5 + 0.12 x speed gave 2.83 m
+    // at Gear 1 max, 0.32 m from the outer fail line.
+    if (forwardBefore > (VEH.steerMinSpeed || 0.2)) {
+      var effRadius = Math.max(VEH.minTurnRadius,
+        VEH.minTurnRadius + forwardBefore * (VEH.turnRadiusSpeedFactor || 0.05));
+      // U-turn steer cap, 2026-10-29 re-insertion, ONLY
+      // while S.uturnInArc (set by checkUturn last frame):
+      // |steer| is capped to effRadius / centreRadius, so
+      // holding LEFT follows the 4.0 m lane centre exactly
+      // (turn radius = effRadius / |steer| = 4.0 m), instead
+      // of cutting inside at the 1.91 m full-lock radius.
+      // This is the analog partial lock a real handlebar can
+      // hold that binary keyboard/mobile input cannot; it
+      // does not change minTurnRadius, gears, or steering
+      // anywhere else (Figure 8, plank, light, bumps, ramp
+      // all keep full lock). Full-lock input in the arc
+      // therefore DOES produce a clean 180 deg turn, as
+      // specified, because the cap maps it to the lane.
+      // U-turn steering cap not yet added in this commit (bug, fixed in commit 9).
+      bikeState.heading += bikeState.steer * (forwardBefore / effRadius) * dt;
+    }
+    // Lateral friction / damping: after the heading change, the
+    // old velocity has a sideways component relative to the NEW
+    // heading. Kill it hard, every frame: vL *= exp(-damping x dt).
+    // At 18/s, sideways speed falls to ~16% in 0.1 s and ~3% in
+    // 0.2 s; under braking it is 30/s, so a stopped bike has no
+    // residual sideways creep at all. This is what makes the bike
+    // track strictly where the front wheel points.
+    var f = forwardVec();
+    var r = rightVec();
+    var vF = bikeState.vx * f.x + bikeState.vz * f.z;
+    var vL = bikeState.vx * r.x + bikeState.vz * r.z;
+    var lateralDamping = input.brake ? 30 : (VEH.lateralDamping || 18);
+    vL *= Math.exp(-lateralDamping * dt);
+    // Throttle: snappy low-end torque in Gear 1 (4.2 m/s^2) with a
+    // HARD cap at 10 km/h (2.78 m/s) - Math.min, so holding gas
+    // can never creep past the cap. Gear 2: 18 km/h, Gear 3:
+    // 25 km/h. In Neutral, gas does nothing. No reverse in any gear.
+    if (input.gas && currentGear !== 0) {
+      vF = Math.min(maxSpeed, vF + gear.accel * dt);
+    }
+    // Braking: sharp and absolute at low speed. 7 m/s^2 normally,
+    // 12 m/s^2 below 3 m/s (the whole Gear 1 range), and if braking
+    // brings forward speed below 0.5 m/s it snaps to exactly 0 -
+    // no creep, no inertia glaze, so a stop at the STOP line is
+    // exactly where you pressed, not 0.5 m past it. From 10 km/h,
+    // 12 m/s^2 stops in ~0.19 s over ~0.31 m (snap below 0.5 m/s);
+    // from 25 km/h, 7 m/s^2 down to 3 m/s then 12 m/s^2 below it
+    // stops in ~0.77 s over ~3.16 m.
+    if (input.brake) {
+      var brakeDecel = VEH.brakeDecel + (vF < 3 ? 5 : 0);
+      vF -= brakeDecel * dt;
+      if (vF < 0.5) vF = 0;
+    }
+    // Gas-off engine braking / coast, gear-dependent, only when
+    // not braking and not accelerating in a gear. Gear 1 is the
+    // strong one: 3.5 m/s^2, so releasing gas at 10 km/h stops
+    // the bike in ~0.8 s over ~1.1 m instead of gliding ~5.5 m.
+    // Gear 2: 1.8, Gear 3: 1.2, Neutral: 0.7 (free coast, no
+    // engine braking). Holding gas in Neutral still coasts, as
+    // before, because gas is disconnected in Neutral.
+    // Coast / engine braking, sign-aware for ramp rollback:
+    // forward motion decays toward 0, backward motion (rollback
+    // on a slope, see gravity below) also decays toward 0, never
+    // away from it. For forward motion this is identical to the
+    // old vF -= coast*dt followed by the vF < 0 clamp.
+    if (!input.brake && !(input.gas && currentGear !== 0)) {
+      var cd = gear.coastDecel || VEH.coastDecel;
+      if (vF > 0) vF = Math.max(0, vF - cd * dt);
+      else if (vF < 0) vF = Math.min(0, vF + cd * dt);
+    }
+    // Bump drag: while a wheel is on a bump, the bike loses
+    // 0.5 m/s^2 extra, on top of gas/coast/brake. At 5 km/h a
+    // 1 m bump takes about 0.7 s, so drag alone costs about
+    // 0.35 m/s per bump before the exit cut in checkBumps.
+    // This uses the wheel heights at the pre-move position
+    // (within one frame of the true position), which is why
+    // it sits here, in the physics, rather than in checkBumps.
+    var wheelBumpNow = bumpWheelHeights();
+    if ((wheelBumpNow[0] > 0 || wheelBumpNow[1] > 0) && vF > 0) {
+      vF = Math.max(0, vF - CONFIG.bumps.dragDecel * dt);
+    }
+    // No reverse on flat ground: a negative vF is only allowed
+    // on the ramp (gravity rollback, below). Everywhere else it
+    // is clamped here, exactly as before.
+    if (vF < 0 && rampSlopeAt(bikeState.x, bikeState.z) === 0) vF = 0;
+    // Downshift engine braking: if the rider was faster than the
+    // new gear's top speed, ease down to it (4 m/s^2) instead of
+    // snapping instantly. In Neutral this does NOT apply - Neutral
+    // has no engine braking, so the bike coasts freely.
+    if (currentGear !== 0 && vF > maxSpeed) {
+      vF = Math.max(maxSpeed, vF - 4.0 * dt);
+    }
+    // NO Figure 8 speed cap here any more (removed 2026-10-29).
+    // The block that used to sit here - easing any speed
+    // above 5 km/h down at 7 m/s^2 in the loop area, and
+    // clamping throttle to 5 km/h - is deleted entirely, not
+    // just raised. What remains is the ordinary gear system:
+    // throttle is capped only at the current gear's top
+    // speed (Gear 1: 10 km/h, Gear 2: 18, Gear 3: 25), plus
+    // brake and gear engine braking, exactly as on every
+    // other station. Steering, lateral damping, and the
+    // Figure 8 outer-line / island rules are unchanged.
+    // Ramp gravity, 2026-10-29. On a slope, gravity pulls the
+    // bike along the slope: forward acceleration = -g * dh/dx *
+    // cos(heading). On the uphill heading east (dh/dx = +1/6,
+    // cos = +1) that is -1.61 m/s^2 backward; on the downhill
+    // heading east (dh/dx = -1/6) it is +1.61 m/s^2 forward;
+    // heading west it reverses, as it must (rolling west down
+    // the uphill is forward). The brake holds the bike: if the
+    // brake is held, gravity is not applied (the brake block
+    // above already snaps low speed to exactly 0). Otherwise,
+    // with no gas, engine braking (coast, sign-aware above)
+    // opposes the gravity: Gear 1 (3.5) and Gear 2 (1.8) hold
+    // the bike on the slope, Neutral (0.7) and Gear 3 (1.2)
+    // do not, so a bike left in Neutral on the uphill rolls
+    // back at (1.61 - 0.7) = 0.91 m/s^2, reaching the 0.5 m
+    // rollback limit in ~1.0 s. With Gear 1 gas, net forward
+    // acceleration is 4.2 - 1.61 = 2.59 m/s^2, a smooth restart
+    // with no stall and no sideways slide (lateral damping
+    // still applies, and heading does not change while the
+    // forward speed is negative, so rollback is straight back).
+    // Rollback speed is capped at 3 m/s backward, so a bike
+    // that rolls off the ramp cannot accelerate indefinitely.
+    if (!input.brake) {
+      var rampSlope = rampSlopeAt(bikeState.x, bikeState.z);
+      if (rampSlope !== 0) {
+        vF += -9.81 * rampSlope * Math.cos(bikeState.heading) * dt;
+        if (vF < -3) vF = -3;
+      }
+    }
+    // Recompose the velocity vector and move by it, not by
+    // heading x scalar speed. At rest, zero the vector outright,
+    // so no residual lateral component can ever creep the bike.
+    bikeState.vx = f.x * vF + r.x * vL;
+    bikeState.vz = f.z * vF + r.z * vL;
+    if (vF === 0) { bikeState.vx = 0; bikeState.vz = 0; }
+    bikeState.speed = Math.sqrt(bikeState.vx * bikeState.vx + bikeState.vz * bikeState.vz);
+    bikeState.x += bikeState.vx * dt;
+    bikeState.z += bikeState.vz * dt;
+    // Ride up onto the plank (0.18 m) or the ramp (0 to 1.0 m)
+    // while over it, smoothly. Ramp takes priority (it does not
+    // overlap the plank: plank z = 0, ramp z = 0 but x ranges
+    // do not overlap - plank x -10 to 0, ramp x 32 to 47), and
+    // rampHeightAt already returns 0 outside the ramp footprint.
+    // Bumps do NOT enter bikeState.y here: their height is added
+    // visually in syncBikeMesh from the wheel heights, so a
+    // short bump does not float the wheels (see syncBikeMesh).
+    var rampY = rampHeightAt(bikeState.x, bikeState.z);
+    var targetY = rampY > 0 ? rampY :
+      ((bikeState.x >= CONFIG.plank.xStart && bikeState.x <= CONFIG.plank.xEnd &&
+        Math.abs(bikeState.z) < CONFIG.plank.width / 2) ? CONFIG.plank.height : 0);
+    bikeState.y += (targetY - bikeState.y) * Math.min(1, dt * 12);
+    syncBikeMesh();
+
+    // --- Rules, in route order ---
+    // Figure 8 -> STOP/plank -> traffic light -> bumps -> ramp
+    // (final) -> finish. Light is split from finish so the
+    // light can run before the bumps, and finish runs last
+    // so it can apply the ramp/bumps bypass penalties.
+    checkFigure8();
+    if (gameState === 'playing') checkStopAndPlank();
+    if (gameState === 'playing') checkUturn();
+    if (gameState === 'playing') checkTrafficLight();
+    if (gameState === 'playing') checkBumps();
+    if (gameState === 'playing') checkRamp();
+    if (gameState === 'playing') checkFinish();
+    if (gameState === 'playing') updateStationBar();
+    updateHUD();
+  }
+
+  // --- Camera ---
+  // Rider body/head are hidden only in POV, so the bike, handlebar,
+  // mirrors and front wheel stay visible in the lower screen.
+  riderGroup.visible = (cameraMode !== 'pov');
+  if (cameraMode === 'top') {
+    var topTarget = new THREE.Vector3(bikeState.x, 32, bikeState.z + 0.01);
+    camera.position.lerp(topTarget, Math.min(1, dt * 6));
+    camera.lookAt(bikeState.x, 0, bikeState.z);
+  } else if (cameraMode === 'pov') {
+    // Head look: Q = left, E = right (or the LOOK buttons), smoothed
+    // towards +/-60 deg. Look-into-turn adds up to 10 deg of yaw
+    // in the steering direction. Roll is up to 8 deg with steering
+    // and speed. Shake is vertical only, growing with speed.
+    var lookTarget = ((input.lookRight ? 1 : 0) - (input.lookLeft ? 1 : 0)) * (Math.PI / 3);
+    headLook += (lookTarget - headLook) * Math.min(1, dt * 8);
+    var pf = forwardVec();
+    var speedFrac = Math.min(1, bikeState.speed / (VEH.maxSpeedKmh / 3.6));
+    var shakeY = (Math.sin(elapsedTime * 30) * 0.015 + Math.sin(elapsedTime * 47) * 0.005) * speedFrac;
+    // Head: 1.2 m above the ground (plus plank height), slightly
+    // behind the handlebar (handlebar at local x = 0.60, head at 0.35).
+    camera.position.set(
+      bikeState.x + pf.x * 0.35, bikeState.y + 1.2 + shakeY, bikeState.z + pf.z * 0.35);
+    var lookHeading = bikeState.heading + bikeState.steer * (10 * Math.PI / 180) + headLook;
+    // Traffic Rider style, 2026-10-29: POV pitches down ~14 deg
+    // (lookAt 2.5 m below eye at 10 m ahead, was 0.2 m, ~1 deg).
+    // Why: the bars/hands/gauge sit only 0.22-0.25 m ahead of
+    // the eye and 0.24-0.34 m below it, i.e. 47-50 deg below
+    // the horizon - outside a 75 deg frame's 37.5 deg half
+    // angle, so with the old level look they were below the
+    // frame, not at its bottom. Pitched down, the cluster
+    // lands near the bottom of the frame (relative angle
+    // ~-34 deg) and the road stays above the bars. Chase and
+    // top-down are untouched; yaw look, head look, roll and
+    // shake below are unchanged, and this is camera only -
+    // no physics, steering, or rule change.
+    camera.lookAt(
+      camera.position.x + Math.cos(lookHeading) * 10,
+      camera.position.y - 0.2,
+      camera.position.z + Math.sin(lookHeading) * 10);
+    // Roll: steering right leans the camera right. After lookAt,
+    // camera local Z points backwards, so a right lean is -roll.
+    var roll = bikeState.steer * Math.min(1, bikeState.speed / 4) * (8 * Math.PI / 180);
+    camera.rotateZ(-roll);
+    drawMinimap();
+  } else {
+    // Chase, 2026-10-29: position already lerped (dt*5,
+    // frame-rate independent exponential dampening, so the
+    // camera follows organically without snapping); the look
+    // target now lerps too (dt*6) instead of jumping to the
+    // bike each frame, which removes the last jarring snap
+    // when steering sharply. POV and top-down are unchanged:
+    // POV keeps its handlebar tilt, mirrors, turn-look and
+    // smoothed head look exactly as before.
+    var cf = forwardVec();
+    // Sportbike chase, fine-tuned 2026-10-29 for the new
+    // tail/tyre/rider silhouette: 4.8 m behind, 2.2 m above
+    // (was 5.0 / 2.4), looking 2.8 m ahead at 0.85 m height,
+    // so the pitch stays about -12 deg, the bike sits low
+    // in the frame, and the road and next station stay
+    // visible above the tail. Lerp rates dt*5 / dt*6 are
+    // unchanged, so the smooth tracking is the same.
+    // Top-down and POV are untouched.
+    var desired = new THREE.Vector3(
+      bikeState.x - cf.x * 5.0, bikeState.y + 2.4, bikeState.z - cf.z * 5.0);
+    camera.position.lerp(desired, Math.min(1, dt * 5));
+    chaseLookTarget.lerp(new THREE.Vector3(
+      bikeState.x + cf.x * 2.5, bikeState.y + 0.9, bikeState.z + cf.z * 2.5),
+      Math.min(1, dt * 6));
+    camera.lookAt(chaseLookTarget);
+  }
+
+  updateMirrors();
+  renderer.render(scene, camera);
+}
+
+// Responsive canvas: full screen, handles resize + device pixel ratio.
+window.addEventListener('resize', function () {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+resetGame();
+animate();
+</script>
+</body>
+</html>
