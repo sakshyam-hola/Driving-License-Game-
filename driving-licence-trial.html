@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 3 of 10 - Traffic light station added (40 points, pass 28). Stop on red at x = 16, go on green. Bumps, ramp and U-turn are still not scored yet.</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 4 of 10 - Road bumps station added (50 points, pass 35). Cross the 5 bumps in Gear 1, under 12 km per hour, straight on. Ramp and U-turn are still not scored yet.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -541,7 +541,7 @@ var CONFIG = {
   // not a full 100-point rescale: no per-station 100-point
   // values were given, so none are invented (see start
   // screen scoring paragraph, which says this plainly).
-  points: { figure8: 20, plank: 10, uturn: 0, signal: 10, bumps: 0, ramp: 0 }, // implemented total = 40 (this commit)
+  points: { figure8: 20, plank: 10, uturn: 0, signal: 10, bumps: 10, ramp: 0 }, // implemented total = 50 (this commit)
   passFraction: 0.70,                            // 70% of implemented total
   penalties: { islandFirstTouch: 5, stopSkipped: 5, redLight: 5,
              bumpsHighSpeed: 5, bumpsSkipped: 5,
@@ -3154,18 +3154,67 @@ function checkTrafficLight() {
 }
 
 function checkBumps() {
-  // Not yet scored in this commit - physics only, no penalty.
+  var B = CONFIG.bumps;
+  // Physics (drag, bounce, wobble visual) still applies even
+  // before the plank, because a bump is physical wherever you
+  // meet it. SCORING, however, is gated on the plank, so a
+  // detour that hits the bumps before the plank does not
+  // count toward the station.
   var wheels = bumpWheelHeights();
   var frontH = wheels[0], rearH = wheels[1];
   var centreH = bumpHeightAt(bikeState.x, bikeState.z);
-  var B = CONFIG.bumps;
-  if ((S.bumpPrevFrontH > 0 && frontH === 0) || (S.bumpPrevRearH > 0 && rearH === 0)) {
+  // Scoring gated on the U-turn (station 6, after station
+  // 4); physics (drag, bounce, wobble visual) still applies
+  // wherever a bump is met, as before.
+  if (S.uturnDone) {
+    // Entry: a wheel that was off a bump last frame is on one
+    // now. Check speed, gear and entry angle at that moment.
+    var entered = (S.bumpPrevFrontH === 0 && frontH > 0) ||
+                  (S.bumpPrevRearH === 0 && rearH > 0);
+    if (entered) {
+      var entryAngle = Math.abs(wrapAngle(bikeState.heading - 0));
+      var wobbleAngle = B.wobbleAngleDeg * Math.PI / 180;
+      var penaltyAngle = B.penaltyAngleDeg * Math.PI / 180;
+      if (bikeState.speed > B.speedLimitMs || entryAngle > wobbleAngle) {
+        S.bumpWobbleTime = 1.0;
+      }
+      if (!S.bumpsHighSpeedPenalty &&
+          (bikeState.speed > B.speedLimitMs || currentGear !== 1 ||
+           entryAngle > penaltyAngle)) {
+        S.bumpsHighSpeedPenalty = true;
+        showToast('Road bumps: too fast, wrong gear, or too steep: -' +
+          CONFIG.penalties.bumpsHighSpeed + ' points', false);
+      }
+    }
+    // Crossed: bike centre passes a bump centre eastward, in
+    // the bumps lane, once per bump.
+    for (var i = 0; i < B.count; i++) {
+      var cx = B.firstCentreX + i * B.spacing;
+      if (!S.bumpsCrossed[i] && S.bumpPrevX < cx && bikeState.x >= cx &&
+          Math.abs(bikeState.z - B.z) < B.width / 2) {
+        S.bumpsCrossed[i] = true; S.bumpsCrossedCount++;
+        if (S.bumpsCrossedCount >= B.count && !S.bumpsDoneToast) {
+          S.bumpsDoneToast = true;
+          showToast('Road bumps complete!', true);
+        }
+      }
+    }
+  }
+  // Exit speed cut: a wheel that was on a bump last frame is
+  // off it now. Scale the velocity (not just the forward
+  // speed) by 0.97 per wheel exit, so the cut applies to the
+  // next frame's motion. With 2 wheels per bump and 5 bumps,
+  // a no-gas run loses about 26% over the whole station
+  // (0.97^10), on top of the 0.5 m/s^2 drag while on a bump
+  // (see animate) - slight, but you must keep the gas on to
+  // hold speed through the bumps.
+  if ((S.bumpPrevFrontH > 0 && frontH === 0) ||
+      (S.bumpPrevRearH > 0 && rearH === 0)) {
     var fct = B.exitSpeedFactor;
     bikeState.vx *= fct; bikeState.vz *= fct; bikeState.speed *= fct;
   }
   S.bumpPrevFrontH = frontH; S.bumpPrevRearH = rearH;
   S.bumpPrevX = bikeState.x; S.bumpPrevCentreH = centreH;
-  if (S.uturnDone && bikeState.x >= 28) S.bumpsCrossedCount = 5;
 }
 
 function checkFinish() {
