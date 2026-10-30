@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 4 of 10 - Road bumps station added (50 points, pass 35). Cross the 5 bumps in Gear 1, under 12 km per hour, straight on. Ramp and U-turn are still not scored yet.</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 5 of 10 - Ramp station added (60 points, pass 42). Stop 0.5 seconds on the uphill and again on the downhill, holding the brake. U-turn is still not scored yet.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -541,7 +541,7 @@ var CONFIG = {
   // not a full 100-point rescale: no per-station 100-point
   // values were given, so none are invented (see start
   // screen scoring paragraph, which says this plainly).
-  points: { figure8: 20, plank: 10, uturn: 0, signal: 10, bumps: 10, ramp: 0 }, // implemented total = 50 (this commit)
+  points: { figure8: 20, plank: 10, uturn: 0, signal: 10, bumps: 10, ramp: 10 }, // implemented total = 60 (this commit)
   passFraction: 0.70,                            // 70% of implemented total
   penalties: { islandFirstTouch: 5, stopSkipped: 5, redLight: 5,
              bumpsHighSpeed: 5, bumpsSkipped: 5,
@@ -3111,9 +3111,93 @@ function checkUturn() {
 }
 
 function checkRamp() {
-  // Not yet scored in this commit - ramp is scenery, no stops required.
-  if (bikeState.x > 32) S.rampStarted = true;
-  if (bikeState.x > 47.2) S.rampDone = true;
+  var R = CONFIG.ramp;
+  // Gated on the U-turn, not just the plank: the ramp is
+  // station 7, after the U-turn, so skipping the U-turn
+  // must not let the ramp count (see checkFinish, which
+  // then counts the U-turn and the ramp as skipped).
+  if (!S.uturnDone || S.rampDone) return;
+  var xEnd = R.xStart + R.upLength + R.flatLength + R.downLength;
+  var onRamp = bikeState.x >= R.xStart - 0.5 && bikeState.x <= xEnd + 0.5 &&
+               Math.abs(bikeState.z - R.z) < R.width / 2 + 0.5;
+  if (onRamp) S.rampStarted = true;
+  // Stop on the uphill: speed < stopSpeed while anywhere on the
+  // uphill section (not only exactly on the painted line, so a
+  // stop 0.5 m early or late still counts, as with the STOP line
+  // zone). 0.5 s of continuous stop = stop done.
+  var onUphill = bikeState.x >= R.xStart && bikeState.x <= R.xStart + R.upLength &&
+                 Math.abs(bikeState.z - R.z) < R.width / 2;
+  if (onUphill && !S.rampStopDone && !S.rampStopSkipped) {
+    if (bikeState.speed < R.stopSpeed) {
+      S.rampStopTime += lastDt;
+      if (S.rampStopTime >= R.stopTimeNeeded) {
+        S.rampStopDone = true; S.rampStopX = bikeState.x;
+        showToast('Ramp stop OK - restart smoothly, do not roll back.', true);
+      }
+    } else {
+      S.rampStopTime = 0;
+    }
+  }
+  // Leaving the uphill without a stop = skipped, -5, once.
+  // The bike can still finish the ramp (and the trial) after this.
+  if (!S.rampStopDone && !S.rampStopSkipped &&
+      bikeState.x > R.xStart + R.upLength + 0.2 && S.rampStarted) {
+    S.rampStopSkipped = true;
+    showToast('Ramp stop skipped: -' + CONFIG.penalties.rampStopSkipped + ' points', false);
+  }
+  // Rollback after a successful stop: more than 0.5 m back from
+  // the stop position = -5, once. The bike can still restart
+  // and finish the ramp after this; the penalty does not fail it.
+  // (User wording "penalty/instant fail" is kept as the -5
+  // penalty used for every other missed stop / rollback in
+  // this game, so a rollback does not end the trial outright.)
+  if (S.rampStopDone && !S.rampRollbackPenalty &&
+      bikeState.x < S.rampStopX - R.rollbackLimit) {
+    S.rampRollbackPenalty = true;
+    showToast('Ramp rollback: -' + CONFIG.penalties.rampRollback + ' points', false);
+  }
+  // Stop on the DOWNHILL, 2026-10-29: speed < stopSpeed
+  // WHILE the brake is held, anywhere on the down slope
+  // (not only exactly on the painted line, and NOT on the
+  // flat top - a flat-top stop does not count, as with the
+  // uphill). 0.5 s of continuous braked stop = stop done.
+  // Brake is required here, not just speed: on the decline
+  // gravity (+1.61 m/s^2 forward) beats Neutral (0.7) and
+  // Gear 3 (1.2) engine braking, so releasing gas alone
+  // cannot hold the bike in those gears, and in Gear 1
+  // the bike would creep forward at ~0.03 m/s without brake.
+  // With brake held, gravity is skipped in animate and
+  // speed snaps to exactly 0, so the timer is clean.
+  var downX0 = R.xStart + R.upLength + R.flatLength;
+  var onDownhill = bikeState.x >= downX0 && bikeState.x < downX0 + R.downLength &&
+                   Math.abs(bikeState.z - R.z) < R.width / 2;
+  if (onDownhill && !S.rampDownStopDone && !S.rampDownStopSkipped) {
+    if (bikeState.speed < R.stopSpeed && input.brake) {
+      S.rampDownStopTime += lastDt;
+      if (S.rampDownStopTime >= R.stopTimeNeeded) {
+        S.rampDownStopDone = true;
+        showToast('Downhill ramp stop OK - proceed down to ground level.', true);
+      }
+    } else {
+      S.rampDownStopTime = 0;
+    }
+  }
+  // Ramp complete: bike centre past the down-ramp exit, having
+  // started the ramp. If the downhill stop was not done by
+  // then, it is skipped (-5, once), before rampDone is set.
+  if (S.rampStarted && bikeState.x > xEnd + 0.2) {
+    if (!S.rampDownStopDone && !S.rampDownStopSkipped) {
+      S.rampDownStopSkipped = true;
+      showToast('Downhill ramp stop skipped: -' + CONFIG.penalties.rampDownStopSkipped + ' points', false);
+    }
+    S.rampDone = true;
+    showToast('Ramp complete!', true);
+  }
+  // No bypass block here any more: the ramp is the final
+  // station, so a bike that goes around the ramp entirely
+  // (never starting it) is handled at the finish gate, in
+  // checkFinish, which counts both ramp stops as skipped
+  // and still finishes the trial, rather than soft-locking.
 }
 
 function checkTrafficLight() {
