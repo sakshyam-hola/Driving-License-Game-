@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 1 of 10 - First playable game. Only Figure 8 and the plank score (30 points, pass 21). The full ground is drawn, but the light, bumps, ramp and U-turn rules are not active yet. Known issue in this commit: Figure 8 fails instantly when you cross the outer line - there is no 2 second grace yet, and the timer keeps running even when you are stopped.</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 2 of 10 - Figure 8 outer line now gives a 2 second warning instead of an instant fail, and the timer pauses when you are stopped. Speed in Figure 8 is limited to 5 km per hour in this commit (that limit is removed again in commit 8). Only Figure 8 and the plank score (30 points, pass 21).</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -755,7 +755,7 @@ var CONFIG = {
     // the union (inside the footprint) before it fails. 2.0 s at
     // Gear 1 speed (~1 m/s) is ~2 m of travel - enough to correct
     // a corner overshoot, not enough to leave the loop area.
-    outerGraceSeconds: 0,
+    outerGraceSeconds: 2.0,
     // NO Figure 8 speed cap, 2026-10-29 removal: the 5 km/h
     // cap added 2026-10-28 (back-section fix) is gone, by
     // request. Speed in the loop is now only the gear top
@@ -2526,7 +2526,7 @@ function resetGame() {
     fig8Checkpoint: 0, fig8OutsideTime: 0, fig8OutsideWarned: false,
     fig8PrevPhi: Math.atan2(CONFIG.start.z - CONFIG.fig8.right.z,
                              CONFIG.start.x - CONFIG.fig8.right.x),
-    fig8Cum: 0,
+    fig8Cum: 0, fig8CapWarned: false,
     islandHits: 0, insideIsland: false,
     stopDone: false, stopTime: 0, stopSkipped: false,
     plankStarted: false, plankDone: false, plankSlowTime: 0,
@@ -2834,7 +2834,9 @@ function checkFigure8() {
       // think, then move forward and correct without failing
       // while standing still. The timer resumes as soon as the
       // bike moves again while still outside.
-      S.fig8OutsideTime += lastDt;
+      if (bikeState.speed >= 0.25) {
+        S.fig8OutsideTime += lastDt;
+      }
       if (!S.fig8OutsideWarned) {
         S.fig8OutsideWarned = true;
         showToast('Outside the outer line - steer back inside, fast!', false);
@@ -3501,6 +3503,13 @@ function animate() {
     // brake and gear engine braking, exactly as on every
     // other station. Steering, lateral damping, and the
     // Figure 8 outer-line / island rules are unchanged.
+    // Figure 8 speed cap, this commit only (5 km per hour, removed in commit 8):
+    // in the loop area, ease speed above 5 km per hour down and clamp it.
+    if (bikeState.x >= -48 && bikeState.x <= -27.5 && Math.abs(bikeState.z) <= 5) {
+      var capMs = 5 / 3.6;
+      if (vF > capMs) vF = Math.max(capMs, vF - 7 * dt);
+      if (!S.fig8CapWarned && vF >= capMs) { S.fig8CapWarned = true; showToast('Figure 8 speed limited to 5 km per hour', false); }
+    }
     // Ramp gravity, 2026-10-29. On a slope, gravity pulls the
     // bike along the slope: forward acceleration = -g * dh/dx *
     // cos(heading). On the uphill heading east (dh/dx = +1/6,
