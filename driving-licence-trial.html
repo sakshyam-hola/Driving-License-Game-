@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 6 of 10 - U-turn pocket added, full route now scores 70 points, pass 49. Known issue in this commit: holding LEFT in the U-turn cuts inside the lane, because the steering cap is not added yet (fixed in commit 9). Figure 8 is still the old left-first route.</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 7 of 10 - Figure 8 now uses the official Nepal DoTM right side entry: right island clockwise first, then left island counter-clockwise, exit on the right lane. Entering from the left is now an instant Wrong Entry Direction fail.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -743,12 +743,12 @@ var CONFIG = {
     // north of the left island before the right loop is a
     // Wrong Entry Direction fail).
     checkpoints: [
-      { x: -40.25, z: -2.6 }, // left north (old left-first route)
-      { x: -38, z: 0 },       // middle neck
-      { x: -35.75, z: 2.6 },  // right south
-      { x: -33.15, z: 0 },    // right east
-      { x: -35.75, z: -2.6 }, // right north
-      { x: -38, z: 0 }        // middle again, then exit east
+      { x: -35.75, z: -2.6 }, // right north (clockwise)
+      { x: -33.15, z: 0 },    // right east (clockwise)
+      { x: -35.75, z: 2.6 },  // right south (clockwise, right loop complete)
+      { x: -40.25, z: -2.6 }, // left north (counter-clockwise)
+      { x: -42.85, z: 0 },    // left west (counter-clockwise)
+      { x: -40.25, z: 2.6 }   // left south (counter-clockwise, then exit east)
     ],
     checkpointRadius: 1.4,
     // Outer line grace: seconds the bike CENTRE may stay outside
@@ -779,7 +779,7 @@ var CONFIG = {
     // island second, counter-clockwise = decreasing phi, so
     // a positive cumulative angle = wrong way there. Reset
     // when the right loop completes (checkpoint 3).
-    wrongWayRad: 999
+    wrongWayRad: 0.6
   },
 
   // --- Station 2: STOP line (right before the plank) ---
@@ -2522,7 +2522,7 @@ function shiftDown() {
 
 function resetGame() {
   S = {
-    fig8Done: false, fig8Phase: 'right', fig8LeftDone: false, fig8RightDone: false, fig8LoopStarted: true,
+    fig8Done: false, fig8Phase: 'right', fig8LeftDone: false, fig8RightDone: false, fig8LoopStarted: false,
     fig8Checkpoint: 0, fig8OutsideTime: 0, fig8OutsideWarned: false,
     fig8PrevPhi: Math.atan2(CONFIG.start.z - CONFIG.fig8.right.z,
                              CONFIG.start.x - CONFIG.fig8.right.x),
@@ -2869,7 +2869,7 @@ function checkFigure8() {
   //     from the left centre), so it cannot trip this.
   // (b) east of the loop heading west before Figure 8 is done
   //     = entering / riding in reverse.
-  if (false && !S.fig8Done && S.fig8Checkpoint < 3 &&
+  if (!S.fig8Done && S.fig8Checkpoint < 3 &&
       bikeState.x < -39.5 && bikeState.z < -1.5 &&
       dist(bikeState.x, bikeState.z, F.left.x, F.left.z) < F.outerRadius + 0.2) {
     failGame('Instant fail: Wrong Entry Direction (-100 pts). Figure 8 must be entered from the right side, right island first.');
