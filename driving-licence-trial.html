@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 5 of 10 - Ramp station added (60 points, pass 42). Stop 0.5 seconds on the uphill and again on the downhill, holding the brake. U-turn is still not scored yet.</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 6 of 10 - U-turn pocket added, full route now scores 70 points, pass 49. Known issue in this commit: holding LEFT in the U-turn cuts inside the lane, because the steering cap is not added yet (fixed in commit 9). Figure 8 is still the old left-first route.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -541,7 +541,7 @@ var CONFIG = {
   // not a full 100-point rescale: no per-station 100-point
   // values were given, so none are invented (see start
   // screen scoring paragraph, which says this plainly).
-  points: { figure8: 20, plank: 10, uturn: 0, signal: 10, bumps: 10, ramp: 10 }, // implemented total = 60 (this commit)
+  points: { figure8: 20, plank: 10, uturn: 10, signal: 10, bumps: 10, ramp: 10 }, // implemented total = 70 (this commit)
   passFraction: 0.70,                            // 70% of implemented total
   penalties: { islandFirstTouch: 5, stopSkipped: 5, redLight: 5,
              bumpsHighSpeed: 5, bumpsSkipped: 5,
@@ -3104,10 +3104,82 @@ function rampSlopeAt(x, z) {
 // (exit, west), i.e. phi INCREASES. A phi decrease past
 // -0.6 rad is the wrong way (around the south side).
 function checkUturn() {
-  // Not yet built in this commit - driving straight east past x=10 counts as done,
-  // so later stations (when added) are not blocked.
+  var U = CONFIG.uturn;
   if (!S.plankDone || S.uturnDone) return;
-  if (bikeState.x > 10) S.uturnDone = true;
+  var dx = bikeState.x - U.centreX, dz = bikeState.z - U.centreZ;
+  var dist = Math.sqrt(dx * dx + dz * dz);
+  var phi = Math.atan2(-dz, dx);
+  // Exit first, using the flag from the previous frame:
+  // south of the diameter (z > centreZ + 0.5), near the exit
+  // x, heading south, with at least ~115 deg of arc behind
+  // us (so a shortcut across the diameter cannot count).
+  if (S.uturnInArc &&
+      bikeState.z > U.centreZ + 0.5 &&
+      Math.abs(bikeState.x - U.exitX) < 1.5 &&
+      Math.sin(bikeState.heading) > 0.5 &&
+      S.uturnPhiCum > 2.0) {
+    S.uturnInArc = false;
+    S.uturnDone = true;
+    showToast('U-turn complete!', true);
+    return;
+  }
+  // Backtracking out the entry side: not done, just leave
+  // the arc; no penalty for turning back and trying again.
+  if (S.uturnInArc &&
+      bikeState.z > U.centreZ + 0.5 &&
+      Math.abs(bikeState.x - U.entryX) < 1.5 &&
+      Math.sin(bikeState.heading) > 0.5) {
+    S.uturnInArc = false;
+    S.uturnPhiCum = 0;
+    S.uturnOutsideTime = 0;
+    return;
+  }
+  var inArcCandidate = dist >= U.innerRadius && dist <= U.outerRadius && dz <= 0.5;
+  if (!S.uturnInArc && inArcCandidate) {
+    S.uturnInArc = true;
+    S.uturnPhiPrev = phi;
+    S.uturnPhiCum = 0;
+    // Left signal must already be ON at first entry.
+    // Turning it on mid-arc does not remove this penalty.
+    if (!leftIndicator && !S.uturnIndicatorPenalty) {
+      S.uturnIndicatorPenalty = true;
+      showToast('U-turn without left signal: -' + CONFIG.penalties.uturnIndicator + ' points', false);
+    }
+    return;
+  }
+  if (!S.uturnInArc) return;
+  // Wrong way: phi cumulating negative while in the arc.
+  var dPhi = wrapAngle(phi - S.uturnPhiPrev);
+  S.uturnPhiPrev = phi;
+  S.uturnPhiCum += dPhi;
+  if (S.uturnPhiCum < -U.wrongWayRad) {
+    failGame('Instant fail: wrong way in the U-turn - it must be taken to the left.');
+    return;
+  }
+  // Border: centre distance outside [inner, outer] while in
+  // the arc. First touch = -10 once; staying outside
+  // continuously for graceSeconds while moving = fail.
+  // The timer pauses when stopped, like Figure 8.
+  var outside = dist < U.innerRadius || dist > U.outerRadius;
+  if (outside) {
+    if (!S.uturnBorderPenalty) {
+      S.uturnBorderPenalty = true;
+      showToast('U-turn border touched: -' + CONFIG.penalties.uturnBorder + ' points', false);
+    }
+    if (bikeState.speed >= 0.25) {
+      S.uturnOutsideTime += lastDt;
+      if (!S.uturnOutsideWarned) {
+        S.uturnOutsideWarned = true;
+        showToast('U-turn: back inside the lane - staying outside fails.', false);
+      }
+      if (S.uturnOutsideTime >= U.graceSeconds) {
+        failGame('Instant fail: stayed outside the U-turn boundary.');
+        return;
+      }
+    }
+  } else {
+    S.uturnOutsideTime = 0;
+  }
 }
 
 function checkRamp() {
