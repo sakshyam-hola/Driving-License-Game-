@@ -350,7 +350,6 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 9 of 10 - U-turn steering cap added: inside the arc only, steering is capped so holding LEFT follows the 4.0 metre lane centre exactly, instead of cutting inside. All stations now work, but the bike is still the simple box bike.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -541,7 +540,7 @@ var CONFIG = {
   // not a full 100-point rescale: no per-station 100-point
   // values were given, so none are invented (see start
   // screen scoring paragraph, which says this plainly).
-  points: { figure8: 20, plank: 10, uturn: 10, signal: 10, bumps: 10, ramp: 10 }, // implemented total = 70 (this commit)
+  points: { figure8: 20, plank: 10, uturn: 10, signal: 10, bumps: 10, ramp: 10 }, // implemented total = 70
   passFraction: 0.70,                            // 70% of implemented total
   penalties: { islandFirstTouch: 5, stopSkipped: 5, redLight: 5,
              bumpsHighSpeed: 5, bumpsSkipped: 5,
@@ -2119,49 +2118,564 @@ bike.add(leanGroup);
 scene.add(bike);
 
 (function buildVehicle() {
-  // Simple box bike, commits 1-9. The high-fidelity bike
-  // (extruded fairings, lathe tank, capsule rider, Traffic
-  // Rider cockpit) is restored in commit 10 only. This simple
-  // version still sets every variable later code expects:
-  // wheelSpin, indicatorMesh, and (left null on purpose)
-  // mirrorTarget / dashCanvas, which updateMirrors and
-  // updateDashboard already return early for.
+  // TODO (Category B later): if CONFIG.activeVehicle === 'car', build
+  // a car body here instead (box body + cabin + 4 wheels at the
+  // wheelOffsets in CONFIG.vehicles.car) and return. Physics and
+  // wheel-track checks already use the config, so nothing else
+  // needs to change except this model builder.
   function part(geo, colour, x, y, z, parent) {
     var m = new THREE.Mesh(geo, mat(colour));
-    m.position.set(x, y, z); (parent || leanGroup).add(m); return m;
+    m.position.set(x, y, z);
+    (parent || leanGroup).add(m);
+    return m;
   }
-  part(new THREE.BoxGeometry(1.10, 0.20, 0.22), 0x2a2f36, 0, 0.50, 0);
-  part(new THREE.BoxGeometry(0.60, 0.25, 0.33), 0xd32f2f, 0.18, 0.80, 0);
-  part(new THREE.BoxGeometry(0.40, 0.06, 0.24), 0x111111, -0.25, 0.80, 0);
-  part(new THREE.BoxGeometry(0.30, 0.04, 0.18), 0xd32f2f, 0.67, 0.68, 0);
-  part(new THREE.BoxGeometry(0.30, 0.04, 0.22), 0xd32f2f, -0.67, 0.68, 0);
-  [0.67, -0.67].forEach(function (wx) {
-    var spin = new THREE.Group(); spin.position.set(wx, 0.33, 0);
-    var tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.12, 20), mat(0x111111));
-    tyre.rotation.x = Math.PI / 2; spin.add(tyre);
-    var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.05, 0.13), mat(0xd9dee6));
-    spin.add(spoke);
-    var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.13, 12), mat(0xd9dee6));
-    hub.rotation.x = Math.PI / 2; spin.add(hub);
+  // Same as part(), but with an explicit material, for the
+  // upgraded bike parts below (metallic frame/tank, chrome
+  // handlebar, rubber tyres, glowing lights).
+  function partMat(geo, material, x, y, z, parent) {
+    var mm = new THREE.Mesh(geo, material);
+    mm.position.set(x, y, z);
+    (parent || leanGroup).add(mm);
+    return mm;
+  }
+  // Procedural-mesh helpers, 2026-10-29 high-fidelity rebuild.
+  // sideExtrude: a side-profile (X forward, Y up) shape
+  // extruded laterally (Z), with a small bevel so edges read
+  // as moulded fairing, not a sharp box. Shape points are
+  // bike-local X/Y; the mesh sits at zCentre. Bevel adds
+  // 0.02 m in X/Y/Z, so shapes below are drawn 0.02 m inside
+  // the 2.00 m / 0.75 m envelope. Both depth and amount are
+  // passed: r128 uses amount, later Three uses depth.
+  function sideExtrude(pts, depth, material, zCentre) {
+    var sh = new THREE.Shape();
+    sh.moveTo(pts[0][0], pts[0][1]);
+    for (var i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
+    sh.closePath();
+    var geo = new THREE.ExtrudeGeometry(sh, { depth: depth, amount: depth,
+      bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2, steps: 1 });
+    var m = new THREE.Mesh(geo, material);
+    m.position.set(0, 0, zCentre - depth / 2);
+    leanGroup.add(m); return m;
+  }
+  // capsuleBetween: a capsule (cylinder + two end spheres)
+  // from p1 to p2, for arms/legs. r128 has no CapsuleGeometry,
+  // so this builds one from core primitives. Segments here
+  // are near-planar in X-Y (Z differs by at most 0.08 m),
+  // so a single Z rotation aligns the capsule; the small
+  // Z offset at the ends is covered by the glove at the grip.
+  function capsuleBetween(p1, p2, radius, material, parent) {
+    var dx = p2.x - p1.x, dy = p2.y - p1.y;
+    var len = Math.sqrt(dx * dx + dy * dy);
+    var g = new THREE.Group();
+    var cylLen = Math.max(0.05, len - 2 * radius);
+    var cyl = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, cylLen, 12), material);
+    g.add(cyl);
+    var s1 = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 10), material);
+    s1.position.y = -cylLen / 2; g.add(s1);
+    var s2 = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 10), material);
+    s2.position.y = cylLen / 2; g.add(s2);
+    g.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+    g.rotation.z = Math.atan2(-dx, dy);
+    (parent || leanGroup).add(g); return g;
+  }
+  // Bike frame, tank, seat, fenders (in leanGroup, always visible).
+  // All lengths fit inside the 2.00 m total length (x -1.00 to +1.00)
+  // and all widths fit inside the 0.75 m handlebar width (z -0.37 to +0.37).
+  // 2026-10-29 realism: metallic paint chassis, metalness
+  // 0.6, roughness 0.3, for both the dark frame and the red
+  // tank (was 0.7/0.35 and 0.4/0.3). Sizes and positions
+  // unchanged, as are the fenders below (same paint).
+  // Sportbike body, 2026-10-29 (user's screenshot + the two
+  // racing-game references): low, faired, and pointed, not a
+  // tall frame box with a round tank on top. Every part stays
+  // inside the 2.00 m length (x -1.00 to +1.00, set by the
+  // wheels) and the 0.75 m handlebar width, and no wheel,
+  // handlebar, or POV position moves. From behind - the chase
+  // view in the screenshot - you now see a tail cowl over a
+  // wide rear tyre, not a tall box.
+  // Frame tube, engine casing, spine tube, swingarm tubes:
+  // cylinders, not boxes, at the same centres as before.
+  var frameTube = partMat(new THREE.CylinderGeometry(0.07, 0.07, 1.10, 12),
+    stdMat(0x2a2f36, 0.3, 0.6), 0, 0.50, 0);
+  frameTube.rotation.z = Math.PI / 2;
+  var engineCase = partMat(new THREE.CylinderGeometry(0.16, 0.16, 0.24, 16),
+    stdMat(0x333333, 0.4, 0.6), 0.05, 0.48, 0);
+  engineCase.rotation.x = Math.PI / 2;
+  var spineTube = partMat(new THREE.CylinderGeometry(0.05, 0.05, 0.70, 12),
+    stdMat(0x2a2f36, 0.3, 0.6), 0, 0.66, 0);
+  spineTube.rotation.z = Math.PI / 2;
+  [-0.11, 0.11].forEach(function (sz) {
+    var sw = partMat(new THREE.CylinderGeometry(0.03, 0.03, 0.50, 10),
+      stdMat(0x555555, 0.4, 0.7), -0.42, 0.34, sz);
+    sw.rotation.z = Math.PI / 2; // swingarm tube
+  });
+  // Belly pan: extruded side profile under the engine.
+  sideExtrude([[-0.20, 0.38], [0.42, 0.38], [0.42, 0.52], [-0.20, 0.52]],
+    0.20, stdMat(0x2a2f36, 0.3, 0.6), 0);
+  // Fuel tank: lathe teardrop, 0.60 m long along X, max
+  // radius 0.165 m, pointed at both ends, front tapered
+  // more than the rear. Lathe axis is Y, so rotation.z
+  // -90 deg lays it along X; centre (0.18, 0.80) as before.
+  var tankPts = [[0.001, -0.30], [0.08, -0.29], [0.14, -0.22], [0.165, -0.10],
+    [0.165, 0.05], [0.14, 0.20], [0.08, 0.28], [0.001, 0.30]].map(function (pt) {
+      return new THREE.Vector2(pt[0], pt[1]); });
+  var tankMesh = partMat(new THREE.LatheGeometry(tankPts, 20),
+    stdMat(VEH.bodyColour, 0.3, 0.6), 0.18, 0.80, 0); // tank
+  tankMesh.rotation.z = -Math.PI / 2;
+  var tankCap = partMat(new THREE.CylinderGeometry(0.05, 0.05, 0.02, 12),
+    stdMat(0xd9dee6, 0.1, 0.9), 0.10, 0.97, 0); // cap, on the tank top
+  // Nose fairing: extruded side profile, front edge at
+  // 0.98 m + 0.02 m bevel = exactly 1.00 m. The extrude
+  // itself is the fairing sides, so the old flat side
+  // panel boxes are removed, not kept alongside it.
+  sideExtrude([[0.40, 0.58], [0.98, 0.62], [0.98, 0.78], [0.75, 0.90], [0.40, 0.86]],
+    0.28, stdMat(VEH.bodyColour, 0.3, 0.6), 0); // nose fairing
+  // Seat: extruded side profile with bevelled edges, low,
+  // under the rider's hips, same centre as before.
+  sideExtrude([[-0.45, 0.78], [-0.05, 0.78], [-0.05, 0.84], [-0.45, 0.84]],
+    0.22, stdMat(0x111111, 0.95, 0), 0); // seat
+  // Tail cowl: extruded pointed tail over the rear wheel,
+  // back edge -0.78 m - 0.02 m bevel = exactly -0.80 m.
+  sideExtrude([[-0.78, 0.80], [-0.30, 0.80], [-0.30, 0.90], [-0.55, 0.94], [-0.78, 0.88]],
+    0.24, stdMat(VEH.bodyColour, 0.3, 0.6), 0); // tail cowl
+  var tailStripe = partMat(new THREE.SphereGeometry(0.12, 14, 10),
+    stdMat(0xf5c518, 0.4, 0.2), -0.55, 0.94, 0); // tail stripe, flattened
+  tailStripe.scale.set(1.5, 0.15, 1.0);
+  // Chrome front forks, 2026-10-29: from the front wheel hub
+  // (0.67, 0.33) up to the handlebar (0.60, 0.86), one each
+  // side (z +/-0.08). Visual only - no wheel, steering or
+  // POV geometry changes; the forks sit in leanGroup, so
+  // they lean with the bike, and they cast shadows with it.
+  [-0.08, 0.08].forEach(function (fz) {
+    var fork = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.55, 10),
+      stdMat(0xd9dee6, 0.1, 0.9));
+    fork.rotation.z = 0.13;
+    fork.position.set(0.635, 0.595, fz); leanGroup.add(fork);
+  });
+  // Fenders: curved torus strips following the wheel top
+  // (major radius 0.36 m, 90 deg arc centred on top), not
+  // flat boxes. Inner radius 0.34 m clears the 0.33 m tyre
+  // by 0.01 m. Front fender is still visible in Rider POV.
+  [[0.67, 0.18], [-0.67, 0.22]].forEach(function (fw) {
+    var fender = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.02, 8, 12, Math.PI / 2),
+      stdMat(VEH.bodyColour, 0.3, 0.6));
+    fender.rotation.z = Math.PI / 4;
+    fender.scale.z = fw[1] / 0.04;
+    fender.position.set(fw[0], 0.33, 0);
+    leanGroup.add(fender);
+  });
+  // Handlebar + mirrors, in steerGroup so they turn with steering.
+  // steerGroup sits at the handlebar position; its children are
+  // local to that point, and syncBikeMesh() sets its Y rotation.
+  // In Rider POV these stay visible in the lower part of the screen.
+  // Handlebar is at x = 0.60, so the POV camera (local x = 0.35)
+  // sits 0.25 m behind it, as specified.
+  steerGroup.position.set(0.60, 0.86, 0);
+  leanGroup.add(steerGroup);
+  (function buildHandlebar() {
+    function sPart(geo, colour, x, y, z) {
+      var m = new THREE.Mesh(geo, mat(colour));
+      m.position.set(x, y, z); steerGroup.add(m); return m;
+    }
+    // 2026-10-29 realism: chrome handlebar, metalness 0.9,
+    // roughness 0.1 (was 0.2), same 0.75 m size and position.
+    var chromeBar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.75),
+      stdMat(0xd9dee6, 0.1, 0.9));
+    chromeBar.position.set(0, 0, 0); steerGroup.add(chromeBar); // bar, 0.75 m wide
+    // Grey rubber grips, 2026-10-29 cockpit: cylinders along
+    // the bar (Z), radius 0.055 m, length 0.16 m, at the bar
+    // ends (z +/-0.30 m). Matte rubber: roughness 0.95,
+    // metalness 0. The bar itself stays chrome, unchanged.
+    [0.30, -0.30].forEach(function (z) {
+      var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.16, 12),
+        gearMaterial(0x555555)); // textured rubber, Traffic Rider style
+      grip.rotation.x = Math.PI / 2;
+      grip.position.set(0, 0, z); steerGroup.add(grip);
+    });
+    // Brake levers, 2026-10-29 cockpit: thin metal boxes
+    // reaching back toward the rider (-X) and slightly
+    // outward, from just inside each grip. Rotation y
+    // angles the lever outward: +0.3 for the +Z side,
+    // -0.3 for the -Z side. Visual only, no new input.
+    [0.27, -0.27].forEach(function (z) {
+      var lever = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.02, 0.04),
+        stdMat(0x9aa0a8, 0.3, 0.8));
+      lever.position.set(-0.08, 0.04, z);
+      lever.rotation.y = (z > 0 ? 0.3 : -0.3);
+      steerGroup.add(lever);
+    });
+    // Brake fluid reservoir (right bar, front brake), switchgear
+    // and cables, Traffic Rider style, 2026-10-29. All in
+    // steerGroup, so they turn with the bar. Visual only,
+    // no new input, no size/position change to the bar itself.
+    var reservoir = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.04, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xe8eef2, transparent: true,
+        opacity: 0.6, roughness: 0.2, metalness: 0.1 }));
+    reservoir.position.set(0.02, 0.08, 0.27); steerGroup.add(reservoir);
+    var resCap = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.02, 0.03),
+      stdMat(0xd9dee6, 0.1, 0.9));
+    resCap.position.set(0.02, 0.11, 0.27); steerGroup.add(resCap);
+    // Switchgear: left = light (white) + turn-signal (amber, the
+    // U-turn left signal) buttons, right = kill switch (red).
+    var sgL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.08),
+      stdMat(0x111111, 0.6, 0));
+    sgL.position.set(0, 0.06, -0.22); steerGroup.add(sgL);
+    var sgL1 = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.012, 0.02),
+      stdMat(0xffffff, 0.4, 0));
+    sgL1.position.set(0, 0.08, -0.24); steerGroup.add(sgL1);
+    var sgL2 = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.012, 0.02),
+      stdMat(0xffa500, 0.4, 0));
+    sgL2.position.set(0, 0.08, -0.20); steerGroup.add(sgL2);
+    var sgR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.08),
+      stdMat(0x111111, 0.6, 0));
+    sgR.position.set(0, 0.06, 0.22); steerGroup.add(sgR);
+    var sgR1 = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.012, 0.02),
+      stdMat(0xff2222, 0.4, 0));
+    sgR1.position.set(0, 0.08, 0.22); steerGroup.add(sgR1);
+    // Cables: thin dark runs from the bar down toward the frame.
+    [0.25, -0.25].forEach(function (cz) {
+      var cable = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.015, 0.015),
+        stdMat(0x111111, 0.9, 0));
+      cable.rotation.z = -0.5;
+      cable.position.set(0.12, -0.08, cz); steerGroup.add(cable);
+    });
+    // Mirror stalks + mirrors, left and right. Centres +/-0.32 m,
+    // mirror depth 0.10 m, so outer edges are exactly +/-0.37 m:
+    // total width with mirrors is 0.74 m, i.e. the 0.75 m handlebar.
+    // 2026-10-29 cockpit: housing is dark plastic, and the
+    // face is a plane facing the rider (-X) whose material
+    // gets the real-time mirror texture in updateMirrors.
+    // Before the first mirror render it is just dark glass.
+    [0.32, -0.32].forEach(function (z) {
+      sPart(new THREE.BoxGeometry(0.05, 0.16, 0.05), 0x333333, 0, 0.10, z);
+      // Oval chrome mirror, Traffic Rider style: a chrome torus
+      // rim scaled to 0.10 m wide x 0.14 m tall (same size as
+      // the old rectangular face), with a circular face
+      // recessed 0.025 m behind it, facing the rider (-X).
+      // The face still gets the real-time mirror texture in
+      // updateMirrors; the rim is chrome, not a mirror face,
+      // so it is not hidden during mirror renders.
+      var rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.10, 8, 24),
+        stdMat(0xd9dee6, 0.1, 0.9));
+      rim.rotation.y = -Math.PI / 2;
+      rim.scale.set(0.05, 0.07, 0.2);
+      rim.position.set(0, 0.20, z); steerGroup.add(rim);
+      var face = new THREE.Mesh(new THREE.CircleGeometry(1, 24),
+        new THREE.MeshBasicMaterial({ color: 0x111111 }));
+      face.rotation.y = -Math.PI / 2; // circle normal -> -X, toward the rider
+      face.scale.set(0.05, 0.07, 1);
+      face.position.set(-0.025, 0.20, z); steerGroup.add(face);
+      mirrorFaceMeshes.push(face);
+    });
+    // Instrument cluster, 2026-10-29 cockpit: dark plastic
+    // box on the bar (local x 0, y 0.10, so world 0.60 / 0.96),
+    // with a backlit canvas face on the rider side (-X).
+    // The face is drawn by updateDashboard() (speed + gear),
+    // and is MeshBasicMaterial so it reads as backlit, not
+    // shaded. It is in steerGroup, so it turns with the bar,
+    // like a real scooter cluster. Size/position only affect
+    // the POV view: the camera (local x 0.35, eye 1.20 m) is
+    // 0.25 m behind it and 0.24 m above it, so the cluster
+    // sits at the bottom centre of the POV screen, with
+    // the road above it, not blocking it.
+    var dashBox = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.20, 0.32),
+      stdMat(0x111111, 0.6, 0));
+    dashBox.position.set(0, 0.10, 0); steerGroup.add(dashBox);
+    // Circular gauge cluster, Traffic Rider style: a 256x256
+    // canvas drawn by updateDashboard() (illuminated needle,
+    // digital km/h, gear indicator) mapped onto a circular
+    // face 0.18 m across, with a chrome bezel rim. Same
+    // centre and same dashboard box as before, so the POV
+    // framing (cluster bottom-centre, road above it) is
+    // unchanged; only the gauge shape and drawing changed.
+    dashCanvas = document.createElement('canvas');
+    dashCanvas.width = 256; dashCanvas.height = 256;
+    dashCtx = dashCanvas.getContext('2d');
+    dashTexture = new THREE.CanvasTexture(dashCanvas);
+    var dashFace = new THREE.Mesh(new THREE.CircleGeometry(1, 32),
+      new THREE.MeshBasicMaterial({ map: dashTexture }));
+    dashFace.rotation.y = -Math.PI / 2;
+    dashFace.scale.set(0.09, 0.09, 1);
+    dashFace.position.set(-0.03, 0.10, 0); steerGroup.add(dashFace);
+    dashHideMeshes.push(dashFace);
+    var dashRim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.08, 8, 32),
+      stdMat(0xd9dee6, 0.1, 0.9));
+    dashRim.rotation.y = -Math.PI / 2;
+    dashRim.scale.set(0.09, 0.09, 0.25);
+    dashRim.position.set(-0.03, 0.10, 0); steerGroup.add(dashRim);
+    dashHideMeshes.push(dashRim);
+    // Windscreen, 2026-10-29 cockpit: transparent plane
+    // above the cluster, in steerGroup. Top at world
+    // y ~1.20 m (eye height), so it sits at the bottom of
+    // the POV view and the road shows through it (opacity
+    // 0.25, DoubleSide). It is hidden during mirror renders
+    // so it cannot tint the mirror image.
+    var shield = new THREE.Mesh(new THREE.PlaneGeometry(0.50, 0.25),
+      new THREE.MeshStandardMaterial({ color: 0xcfe0ee, transparent: true,
+        opacity: 0.25, roughness: 0.05, metalness: 0, side: THREE.DoubleSide }));
+    shield.rotation.y = Math.PI / 2; // width axis -> Z, normal -> +X (forward)
+    shield.position.set(0.05, 0.22, 0); steerGroup.add(shield);
+    dashHideMeshes.push(shield);
+    // Mirror render target + rear camera, created once here
+    // (after the scene exists, before the first animate frame).
+    mirrorTarget = new THREE.WebGLRenderTarget(128, 128);
+    mirrorCamera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+  })();
+  // Hands + forearms, Traffic Rider style, in steerGroup so
+  // they turn with the bar (see syncBikeMesh: bar rotation
+  // -steer*0.785, camera look only +steer*10 deg, so the bar
+  // and hands visibly rotate relative to the camera frame,
+  // and the chassis lean + camera roll give the lean angle).
+  // Each hand grips its grip: a palm on top of the grip and
+  // fingers wrapping its front (+X) side, in dark leather/
+  // fabric texture. Forearms in the rider jacket colour run
+  // back toward the rider (-X) from each hand, ending just
+  // in front of the POV camera, so in POV they read as arms
+  // coming up from the bottom of the screen, as in Traffic
+  // Rider. RiderGroup itself is still hidden in POV, so
+  // these steerGroup hands/forearms are what the rider sees.
+  // Visual only: no grip, bar, or camera position changed.
+  [0.32, -0.32].forEach(function (z) {
+    var palm = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.04, 0.11),
+      gearMaterial(0x111111));
+    palm.position.set(-0.02, 0.07, z); steerGroup.add(palm);
+    var fingers = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.10, 0.11),
+      gearMaterial(0x111111));
+    fingers.position.set(0.06, 0.0, z); steerGroup.add(fingers);
+    var forearm = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.07, 0.09),
+      gearMaterial(VEH.riderColour));
+    forearm.position.set(-0.18, 0.0, z); steerGroup.add(forearm);
+  });
+  // Wheels: cylinder axis must be lateral (local Z). CylinderGeometry
+  // is Y-axis by default, so rotate X by 90 deg inside a spin group
+  // whose Z rotation is the rolling rotation. Radius comes from
+  // CONFIG (0.33 m), centres from wheelOffsets (+/-0.67 m).
+  VEH.wheelOffsets.forEach(function (off, wi) {
+    var spin = new THREE.Group();
+    spin.position.set(off.x, VEH.wheelRadius || 0.33, off.z);
+    // Sportbike wheels, 2026-10-29: a real motorcycle tyre is
+    // rounded in cross-section, not a flat disc, so the tyre
+    // is now a torus (outer radius still exactly 0.33 m, so
+    // rolling, wheel checks, and ground contact are unchanged;
+    // only the profile changed). Rear tyre is wider than the
+    // front, as in the racing references: rear torus tube
+    // 0.11 m (0.22 m wide), front tube 0.10 m (0.20 m wide).
+    // Wheel centres, radius, and spin group are unchanged.
+    var isRear = (wi === 1);
+    // Scaled torus: major 0.27 m, tube 0.06 m, so the outer
+    // radius is still 0.33 m and the rim inner radius is
+    // 0.21 m, but the lateral width is stretched to 0.22 m
+    // rear / 0.20 m front. A plain torus would bury the
+    // spokes inside the tube; with this shape the spokes
+    // below (hub to rim) stay visible in the open centre.
+    var tyre = new THREE.Mesh(new THREE.TorusGeometry(
+      0.27, 0.06, 12, 24), stdMat(0x111111, 0.95, 0));
+    tyre.scale.z = isRear ? 1.83 : 1.67;
+    spin.add(tyre);
+    // Rim ring at the tyre inner radius (0.21 m), so the
+    // wheel reads as tyre + rim + spokes from the side.
+    var rim = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.015, 8, 24),
+      stdMat(0x555555, 0.4, 0.7));
+    spin.add(rim);
+    var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 12), stdMat(0xd9dee6, 0.1, 0.9));
+    hub.rotation.x = Math.PI / 2;
+    spin.add(hub);
+    // Spokes + brake disc, in the spin group so they roll
+    // with the wheel. Five spokes from hub edge (0.11 m) to
+    // rim inner radius (0.21 m); disc on the right side of
+    // the wheel, just outside the tyre width.
+    for (var si = 0; si < 5; si++) {
+      var sa = si * Math.PI * 2 / 5;
+      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.04, 0.03),
+        stdMat(0x555555, 0.4, 0.7));
+      spoke.position.set(Math.cos(sa) * 0.16, Math.sin(sa) * 0.16, 0);
+      spoke.rotation.z = sa;
+      spin.add(spoke);
+    }
+    var disc = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.02, 16),
+      stdMat(0x9aa0a8, 0.3, 0.8));
+    disc.rotation.x = Math.PI / 2;
+    disc.position.set(0, 0, 0.12);
+    spin.add(disc);
+    // Tread detail, 2026-10-29 realism: 12 small blocks
+    // around each tyre, in the spin group so they roll with
+    // the wheel. Each block is radial (0.04 m tall, centred
+    // on the tyre radius, so it sticks out 0.02 m) and
+    // tangential (0.08 m wide), across the full tyre width.
+    // No size, position or rolling speed changes: the spin
+    // group is the same one syncBikeMesh() already rotates.
+    // Racing style, 2026-10-29: rear wheel (index 1) gets a
+    // denser, wider tread - 16 blocks, 0.07 m tangential,
+    // 0.12 m across - for a detailed rear tyre; the front
+    // wheel keeps its 12 blocks. Tread blocks are in the spin
+    // group, so they roll with the wheel exactly as before.
+    var treadCount = (wi === 1) ? 16 : 12;
+    var treadTang = (wi === 1) ? 0.07 : 0.08;
+    var treadWide = (wi === 1) ? 0.18 : 0.14; // match the wider torus tyres
+    for (var ti = 0; ti < treadCount; ti++) {
+      var ta = ti * Math.PI * 2 / treadCount;
+      var tread = new THREE.Mesh(new THREE.BoxGeometry(treadTang, 0.04, treadWide),
+        stdMat(0x0d0d0d, 0.95, 0));
+      tread.position.set(Math.cos(ta) * (VEH.wheelRadius || 0.33),
+        Math.sin(ta) * (VEH.wheelRadius || 0.33), 0);
+      tread.rotation.z = ta;
+      spin.add(tread);
+    }
     leanGroup.add(spin); wheelSpin.push(spin);
   });
-  steerGroup.position.set(0.60, 0.86, 0); leanGroup.add(steerGroup);
-  var bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.75), mat(0xd9dee6));
-  steerGroup.add(bar);
-  [0.30, -0.30].forEach(function (z) {
-    var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.16, 12), mat(0x555555));
-    grip.rotation.x = Math.PI / 2; grip.position.set(0, 0, z); steerGroup.add(grip);
+  // Rider: legs, torso, arms, head + helmet. Simple boxes/sphere.
+  // All in riderGroup, so Rider POV can hide the rider body/head
+  // while keeping the bike, handlebar, mirrors and front wheel.
+  // Rider height is scaled down to match the bike: head centre at
+  // 1.45 m (top 1.62 m), not 1.75 m (top 1.92 m) as before, so the
+  // rider no longer looks like a standing person on a small bike.
+  // The POV eye height stays at the specified 1.20 m, independent
+  // of this model head height.
+  // Rider gear, 2026-10-29 realism: textured fabric
+  // (gearMaterial) for legs, torso and arms, instead of flat
+  // colour. Sizes and positions are unchanged, so the
+  // grounded proportions and the POV eye height (1.20 m,
+  // independent of this model) are exactly as before.
+  // Racing style, 2026-10-29: blue/yellow racing suit - legs
+  // now blue like the torso (were dark grey), with yellow
+  // bands across the torso and each arm. Sizes/positions of
+  // the suit itself are unchanged; the bands protrude 0.01 m
+  // so they read as stripes, not new limbs.
+  // Anatomical rider, 2026-10-29 high-fidelity rebuild:
+  // capsule thighs/shins/upper arms/forearms with sphere
+  // joints, a tapered-cylinder torso, and sphere shoulders
+  // / pelvis, in the same crouched pose and at the same
+  // joint positions as the sportbike rebuild (hips on the
+  // seat, knees tucked at the tank, elbows bent to the
+  // grips). No box torso or box limbs remain. RiderGroup
+  // is still hidden in POV, so this changes chase and
+  // top-down only; POV eye height (1.20 m) is independent.
+  var pelvis = partMat(new THREE.SphereGeometry(0.17, 14, 10),
+    gearMaterial(VEH.riderColour), -0.28, 0.90, 0, riderGroup);
+  pelvis.scale.set(1.1, 0.7, 1.0);
+  // Torso: tapered cylinder, shoulders wider than waist,
+  // leaning forward 0.45 rad, centre (0, 1.08) as before.
+  var torso = partMat(new THREE.CylinderGeometry(0.19, 0.16, 0.50, 14),
+    gearMaterial(VEH.riderColour), 0.0, 1.08, 0, riderGroup);
+  torso.rotation.z = -0.45;
+  var torsoStripe = partMat(new THREE.CylinderGeometry(0.20, 0.20, 0.10, 14),
+    stdMat(0xf5c518, 0.4, 0.2), 0.0, 1.08, 0, riderGroup);
+  torsoStripe.rotation.z = -0.45; // torso stripe, follows the lean
+  var hump = partMat(new THREE.SphereGeometry(0.12, 12, 10),
+    gearMaterial(VEH.riderColour), -0.10, 1.20, 0, riderGroup);
+  hump.scale.set(1.0, 0.5, 1.2); // racing-suit back hump
+  [0.17, -0.17].forEach(function (lz) {
+    // Leg: hip -> knee (tucked at the tank side) -> ankle.
+    capsuleBetween({ x: -0.30, y: 0.90, z: lz }, { x: 0.08, y: 0.72, z: lz },
+      0.07, gearMaterial(VEH.riderColour), riderGroup); // thigh
+    capsuleBetween({ x: 0.08, y: 0.72, z: lz }, { x: -0.05, y: 0.58, z: lz },
+      0.06, gearMaterial(VEH.riderColour), riderGroup); // shin
+    partMat(new THREE.SphereGeometry(0.07, 12, 10),
+      gearMaterial(VEH.riderColour), 0.08, 0.72, lz, riderGroup); // knee joint
   });
-  function rpart(geo, colour, x, y, z) {
-    var m = new THREE.Mesh(geo, mat(colour)); m.position.set(x, y, z); riderGroup.add(m); return m;
-  }
-  rpart(new THREE.BoxGeometry(0.30, 0.18, 0.30), 0x1e5aa8, -0.30, 0.88, 0);
-  rpart(new THREE.BoxGeometry(0.20, 0.50, 0.34), 0x1e5aa8, 0, 1.08, 0);
-  var head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), mat(0x111111));
-  head.position.set(0.20, 1.32, 0); riderGroup.add(head);
+  [0.18, -0.18].forEach(function (az) {
+    // Arm: shoulder -> bent elbow -> grip. The steerGroup
+    // glove at the grip meets the forearm end in chase view.
+    partMat(new THREE.SphereGeometry(0.08, 12, 10),
+      gearMaterial(VEH.riderColour), 0.05, 1.24, az, riderGroup); // shoulder joint
+    capsuleBetween({ x: 0.05, y: 1.24, z: az }, { x: 0.30, y: 1.05, z: az + (az > 0 ? 0.06 : -0.06) },
+      0.05, gearMaterial(VEH.riderColour), riderGroup); // upper arm
+    capsuleBetween({ x: 0.30, y: 1.05, z: az + (az > 0 ? 0.06 : -0.06) }, { x: 0.60, y: 0.86, z: az + (az > 0 ? 0.12 : -0.12) },
+      0.045, gearMaterial(VEH.riderColour), riderGroup); // forearm
+    partMat(new THREE.SphereGeometry(0.05, 12, 10),
+      gearMaterial(VEH.riderColour), 0.30, 1.05, az + (az > 0 ? 0.06 : -0.06), riderGroup); // elbow joint
+  });
+  // Dark helmet, 2026-10-29 realism: glossy dark shell
+  // (roughness 0.2, metalness 0.3) instead of the yellow
+  // config colour. Appearance only: no rule reads
+  // VEH.helmetColour, and the helmet size/position are
+  // unchanged.
+  // Racing style, 2026-10-29: textured helmet - a canvas
+  // texture (dark shell with yellow/white racing bands)
+  // wrapped on the same sphere, same size/position. The
+  // glossy visor below is unchanged.
+  var helmetCanvas = document.createElement('canvas');
+  helmetCanvas.width = 128; helmetCanvas.height = 128;
+  var hc = helmetCanvas.getContext('2d');
+  hc.fillStyle = '#1a1d21'; hc.fillRect(0, 0, 128, 128);
+  hc.fillStyle = '#ffffff'; hc.fillRect(0, 48, 128, 8);
+  hc.fillStyle = '#f5c518'; hc.fillRect(0, 56, 128, 16);
+  var helmetMat = new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(helmetCanvas),
+    roughness: 0.2, metalness: 0.3 });
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), helmetMat);
+  head.position.set(0.20, 1.32, 0); riderGroup.add(head); // low, forward, over the tank (was -0.02, 1.45)
+  // Rider details, 2026-10-29: dark visor on the helmet front,
+  // boots at the foot ends of the legs, gloves at the handlebar
+  // ends (in steerGroup, so they turn with the bar). All in
+  // riderGroup / steerGroup as noted, so POV hiding still
+  // works: rider details hide in POV, gloves stay with the bar.
+  var visor = partMat(new THREE.SphereGeometry(0.17, 16, 12),
+    stdMat(0x0a0a0a, 0.1, 0.6), 0.33, 1.32, 0, riderGroup); // curved glossy visor
+  visor.scale.set(0.35, 0.55, 0.85);
+  [0.18, -0.18].forEach(function (bz) {
+    // Boot: horizontal cylinder + rounded toe sphere, not a box.
+    var bootTube = partMat(new THREE.CylinderGeometry(0.05, 0.05, 0.25, 10),
+      gearMaterial(0x111111), -0.02, 0.55, bz, riderGroup);
+    bootTube.rotation.z = Math.PI / 2;
+    partMat(new THREE.SphereGeometry(0.05, 10, 8),
+      gearMaterial(0x111111), 0.10, 0.55, bz, riderGroup); // toe
+  });
+  // Bike details, 2026-10-29: glowing headlight (Basic material,
+  // so it glows in any light) + a small PointLight at the lamp
+  // that lights the road ahead, red tail light at the rear,
+  // and a metallic side exhaust. Sizes keep the bike inside
+  // the 2.00 m length and 0.75 m width; the PointLight casts
+  // no shadow (only the sun does, for performance).
+  // Headlamp lens, 2026-10-29 realism: transparent glass
+  // (opacity 0.75, roughness 0.1, warm emissive) instead of
+  // the old opaque Basic yellow box. Same size/position;
+  // the PointLight below still lights the road ahead.
+  // Twin headlamp lenses: flattened glass spheres in the
+  // nose fairing front, left and right, same glass material.
+  [0.08, -0.08].forEach(function (hz) {
+    var lens = partMat(new THREE.SphereGeometry(0.06, 12, 10),
+      new THREE.MeshStandardMaterial({ color: 0xfff7cc, transparent: true, opacity: 0.75,
+        roughness: 0.1, metalness: 0, emissive: 0xfff2cc, emissiveIntensity: 0.5 }),
+      0.97, 0.70, hz);
+    lens.scale.set(0.5, 1.0, 1.0);
+  });
+  var headlamp = new THREE.PointLight(0xfff2cc, 0.5, 7);
+  headlamp.position.set(0.98, 0.72, 0); leanGroup.add(headlamp);
+  // Brake light, 2026-10-29 realism: glowing translucent
+  // red (opacity 0.9, emissive red) instead of opaque Basic
+  // red. Same size/position.
+  var tailLight = partMat(new THREE.SphereGeometry(0.06, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff1111, emissiveIntensity: 0.7,
+      transparent: true, opacity: 0.9, roughness: 0.3, metalness: 0 }),
+    -0.81, 0.86, 0); // tail light, curved, at the tail cowl rear
+  tailLight.scale.set(0.4, 0.7, 1.7);
+  // Racing style, 2026-10-29: round exhaust pipe + chrome
+  // muffler, centred where the old box exhaust was (same
+  // centre, same overall span, inside the 2.00 m length).
+  var exhaustPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.60, 12),
+    stdMat(0x9aa0a8, 0.35, 0.8));
+  exhaustPipe.rotation.z = Math.PI / 2;
+  exhaustPipe.position.set(-0.15, 0.42, 0.20); leanGroup.add(exhaustPipe);
+  // Muffler: lathe silencer, tapered at both ends, 0.20 m
+  // long along X, max radius 0.08 m, same centre as before.
+  var muffPts = [[0.001, -0.10], [0.07, -0.10], [0.08, -0.05], [0.08, 0.05],
+    [0.06, 0.10], [0.001, 0.10]].map(function (pt) { return new THREE.Vector2(pt[0], pt[1]); });
+  var muffler = new THREE.Mesh(new THREE.LatheGeometry(muffPts, 16),
+    stdMat(0xd9dee6, 0.2, 0.9));
+  muffler.rotation.z = Math.PI / 2;
+  muffler.position.set(-0.50, 0.42, 0.20); leanGroup.add(muffler);
+  var mufflerTip = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.01, 8, 16),
+    stdMat(0x333333, 0.4, 0.7));
+  mufflerTip.rotation.y = Math.PI / 2; // ring facing rear (-X)
+  mufflerTip.position.set(-0.61, 0.42, 0.20); leanGroup.add(mufflerTip);
+  // Left indicator light, 2026-10-29 U-turn: small amber box
+  // at the front-left (local -Z is left when heading east),
+  // above the handlebar end. Blinked in syncBikeMesh; it is
+  // in leanGroup, not riderGroup, so it stays visible in POV.
   indicatorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08),
     new THREE.MeshBasicMaterial({ color: 0xffa500 }));
-  indicatorMesh.position.set(0.60, 0.95, -0.35); indicatorMesh.visible = false;
+  indicatorMesh.position.set(0.60, 0.95, -0.35);
+  indicatorMesh.visible = false;
   leanGroup.add(indicatorMesh);
 })();
 // Bike casts shadows: every mesh in the bike group (frame,
@@ -2561,11 +3075,11 @@ function resetGame() {
   syncBikeMesh();
   // Snap the camera behind the bike so the first frame is not a swoop.
   var f = forwardVec();
-  camera.position.set(bikeState.x - f.x * 5.0, bikeState.y + 2.4, bikeState.z - f.z * 5.0);
+  camera.position.set(bikeState.x - f.x * 4.8, bikeState.y + 2.2, bikeState.z - f.z * 4.8);
   camera.lookAt(bikeState.x, bikeState.y + 0.9, bikeState.z);
   // The smoothed chase look target snaps with it, so the first
   // chase frame does not lerp in from the old position.
-  chaseLookTarget.set(bikeState.x + f.x * 2.5, bikeState.y + 0.9, bikeState.z + f.z * 2.5);
+  chaseLookTarget.set(bikeState.x + f.x * 2.8, bikeState.y + 0.85, bikeState.z + f.z * 2.8);
   hideResult(); setStation('Figure 8',
     'Enter from the right side (south). Follow the top-bar hint for each next step.');
   updateHUD(); updateTrafficLight();
@@ -3848,7 +4362,7 @@ function animate() {
     // no physics, steering, or rule change.
     camera.lookAt(
       camera.position.x + Math.cos(lookHeading) * 10,
-      camera.position.y - 0.2,
+      camera.position.y - 2.5,
       camera.position.z + Math.sin(lookHeading) * 10);
     // Roll: steering right leans the camera right. After lookAt,
     // camera local Z points backwards, so a right lean is -roll.
@@ -3874,10 +4388,10 @@ function animate() {
     // unchanged, so the smooth tracking is the same.
     // Top-down and POV are untouched.
     var desired = new THREE.Vector3(
-      bikeState.x - cf.x * 5.0, bikeState.y + 2.4, bikeState.z - cf.z * 5.0);
+      bikeState.x - cf.x * 4.8, bikeState.y + 2.2, bikeState.z - cf.z * 4.8);
     camera.position.lerp(desired, Math.min(1, dt * 5));
     chaseLookTarget.lerp(new THREE.Vector3(
-      bikeState.x + cf.x * 2.5, bikeState.y + 0.9, bikeState.z + cf.z * 2.5),
+      bikeState.x + cf.x * 2.8, bikeState.y + 0.85, bikeState.z + cf.z * 2.8),
       Math.min(1, dt * 6));
     camera.lookAt(chaseLookTarget);
   }
