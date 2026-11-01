@@ -350,7 +350,7 @@
 <div class="overlay" id="startScreen">
   <div class="card">
     <h1>&#127949; Nepal Driving Licence Trial</h1>
-    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 8 of 10 - The 5 km per hour Figure 8 speed limit is removed. Speed in Figure 8 is now only gear top speed, throttle, brake and engine braking. Going fast can still fail through the outer line and island rules, not through speed enforcement.</b></p>
+    <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;color:#78350f;"><b>Commit 9 of 10 - U-turn steering cap added: inside the arc only, steering is capped so holding LEFT follows the 4.0 metre lane centre exactly, instead of cutting inside. All stations now work, but the bike is still the simple box bike.</b></p>
     <p><b>Category A - Bike.</b> A simplified version of the Department of
     Transport Management trial, on one flat test ground. Finish all
     stations to get your score.</p>
@@ -3654,7 +3654,11 @@ function animate() {
       // all keep full lock). Full-lock input in the arc
       // therefore DOES produce a clean 180 deg turn, as
       // specified, because the cap maps it to the lane.
-      // U-turn steering cap not yet added in this commit (bug, fixed in commit 9).
+      if (S.uturnInArc) {
+        var uturnCap = effRadius / CONFIG.uturn.centreRadius;
+        if (bikeState.steer > uturnCap) bikeState.steer = uturnCap;
+        if (bikeState.steer < -uturnCap) bikeState.steer = -uturnCap;
+      }
       bikeState.heading += bikeState.steer * (forwardBefore / effRadius) * dt;
     }
     // Lateral friction / damping: after the heading change, the
